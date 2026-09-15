@@ -1,0 +1,42 @@
+{
+  "private": true,
+  "name": "mattermost-plugin-customers-webapp",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "webpack --mode=production",
+    "build:watch": "webpack --mode=production --watch",
+    "debug": "webpack --mode=none",
+    "debug:watch": "webpack --mode=development --watch",
+    "lint": "eslint --ignore-pattern node_modules --ignore-pattern dist --ext=.js,.jsx,tsx,ts . --quiet --cache",
+    "fix": "eslint --ignore-pattern node_modules --ignore-pattern dist --ext=.js,.jsx,tsx,ts . --quiet --fix --cache",
+    "check-types": "tsc"
+  },
+  "devDependencies": {
+    "@babel/core": "7.25.2",
+    "@babel/preset-env": "7.25.4",
+    "@babel/preset-react": "7.24.7",
+    "@babel/preset-typescript": "7.24.7",
+    "@babel/runtime": "7.25.6",
+    "@mattermost/types": "11.1.0",
+    "@types/node": "20.17.6",
+    "@types/react": "18.2.64",
+    "@types/react-redux": "7.1.22",
+    "@typescript-eslint/eslint-plugin": "7.18.0",
+    "@typescript-eslint/parser": "7.0.2",
+    "babel-loader": "9.1.2",
+    "css-loader": "6.5.1",
+    "eslint": "8.57.0",
+    "eslint-plugin-react": "7.34.1",
+    "eslint-plugin-react-hooks": "4.6.0",
+    "typescript": "4.9.5",
+    "webpack": "5.95.0",
+    "webpack-cli": "5.1.4"
+  },
+  "dependencies": {
+    "core-js": "3.26.0",
+    "mattermost-redux": "11.1.0",
+    "react": "18.2.0",
+    "react-redux": "9.2.0",
+    "redux": "5.0.1"
+  }
+}
