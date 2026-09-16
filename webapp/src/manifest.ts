@@ -8,7 +8,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -84,6 +84,110 @@ const manifest = JSON.parse(`
                 "help_text": "允许每个用户在自己的「设置」里覆盖默认格式与开关。",
                 "placeholder": "",
                 "default": true,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HistoryLockEnabled",
+                "display_name": "启用新成员历史消息隔离",
+                "type": "bool",
+                "help_text": "开启后，新加入频道的成员将看不到其加入之前的历史消息。边界由服务端记录，前端负责隐藏。",
+                "placeholder": "",
+                "default": true,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HistoryMode",
+                "display_name": "历史可见范围",
+                "type": "dropdown",
+                "help_text": "since_join：只看该成员加入频道之后发送的消息（推荐）。recent_days：所有成员都只能看到最近 N 天的消息（N 见下方）。off：不做任何限制。",
+                "placeholder": "",
+                "default": "since_join",
+                "options": [
+                    {
+                        "display_name": "只看加入之后（推荐）",
+                        "value": "since_join"
+                    },
+                    {
+                        "display_name": "只看最近 N 天",
+                        "value": "recent_days"
+                    },
+                    {
+                        "display_name": "不限制",
+                        "value": "off"
+                    }
+                ],
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HistoryDays",
+                "display_name": "最近 N 天的天数",
+                "type": "text",
+                "help_text": "仅在「历史可见范围 = 只看最近 N 天」时生效。填写正整数。",
+                "placeholder": "7",
+                "default": "7",
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "LegacyMemberMode",
+                "display_name": "存量成员如何处理",
+                "type": "dropdown",
+                "help_text": "插件只记录安装之后发生的加入事件。对于没有记录的成员：show_all 表示不限制（推荐，安装插件不会让老成员丢历史）；since_activation 表示以插件首次启用时间为边界。如需对个别成员精确设置，可用管理接口 POST /api/v1/history/boundary 回填。",
+                "placeholder": "",
+                "default": "show_all",
+                "options": [
+                    {
+                        "display_name": "不限制（推荐）",
+                        "value": "show_all"
+                    },
+                    {
+                        "display_name": "以插件启用时间为边界",
+                        "value": "since_activation"
+                    }
+                ],
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HideInSearch",
+                "display_name": "同时隐藏搜索与右侧栏中的历史消息",
+                "type": "bool",
+                "help_text": "开启后，被隐藏的消息在搜索结果、右侧线程、置顶与已保存列表中同样不可见。",
+                "placeholder": "",
+                "default": true,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HistoryNoticeEnabled",
+                "display_name": "显示隐藏提示",
+                "type": "bool",
+                "help_text": "在频道顶部显示一条提示，说明更早的消息已被隐藏。",
+                "placeholder": "",
+                "default": true,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "HistoryNoticeText",
+                "display_name": "隐藏提示文案",
+                "type": "text",
+                "help_text": "显示在频道顶部的提示文字。",
+                "placeholder": "此消息及之前的消息发送于你加入本频道之前，已隐藏",
+                "default": "此消息及之前的消息发送于你加入本频道之前，已隐藏",
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "ExemptSystemAdmins",
+                "display_name": "系统管理员不受限制",
+                "type": "bool",
+                "help_text": "开启后，拥有「管理服务器」权限的用户仍可看到完整历史，便于排障。",
+                "placeholder": "",
+                "default": false,
                 "hosting": "",
                 "secret": false
             }

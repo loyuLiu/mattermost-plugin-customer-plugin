@@ -1,10 +1,15 @@
 # Customers Plugin（Mattermost 插件）
 
-面向 **Mattermost 10.12.x** 的客户化定制插件。首个功能是**接管聊天窗口的时间显示**：管理员在系统控制台统一配置显示格式（如 `2026-09-15 09:42`），用户也可以在自己的「设置」里按个人偏好覆盖。
+面向 **Mattermost 10.12.x** 的客户化定制插件，目前提供两个功能：
+
+1. **接管聊天窗口的时间显示** —— 管理员在系统控制台统一配置显示格式（如 `2026-09-15 09:42`），用户也可以在自己的「设置」里按个人偏好覆盖。
+2. **新成员历史消息隔离** —— 新加入频道的成员看不到其加入之前的历史消息。
 
 ---
 
 ## 1. 它能做什么
+
+### 1.1 时间显示自定义
 
 | 能力 | 说明 |
 | --- | --- |
@@ -13,6 +18,16 @@
 | 自定义格式令牌 | 支持 `YYYY MM DD HH mm ss dddd MMMM A Z ...`，还支持方括号字面量（如 `YYYY年MM月DD日 HH:mm`） |
 | 时区控制 | 可留空（用浏览器本地时区），或强制到某个 IANA 时区（如 `Asia/Shanghai`、`UTC`） |
 | 作用范围 | 仅消息时间（`time.post__time`）或页面内所有 `<time>` 元素（含悬停提示、右侧边栏、搜索结果） |
+
+### 1.2 新成员历史消息隔离
+
+| 能力 | 说明 |
+| --- | --- |
+| 按加入时间隔离 | 服务端在 `UserHasJoinedChannel` 钩子里记录「谁在什么时候进了哪个频道」，前端据此隐藏更早的消息 |
+| 服务端权威 | 边界只由服务端计算并通过 `GET /api/v1/history/boundary` 下发，前端不能自己编造 |
+| 多视图覆盖 | 中心频道、右侧线程，可选搜索结果 / 置顶 / 已保存 |
+| 管理员回填 | 老成员可通过管理接口 `POST /api/v1/history/boundary` 精确设置边界，不必先移出频道 |
+| 提示条 | 频道头部可显示一条提示，说明更早的消息已被隐藏 |
 
 ---
 
@@ -32,8 +47,10 @@ customers-plugin/
 │   ├── main.go              # plugin.ClientMain 入口
 │   ├── plugin.go            # Plugin 结构体 + OnActivate/ServeHTTP
 │   ├── configuration.go     # 系统控制台配置加载、校验、默认值
-│   ├── api.go               # 自有 REST 接口 GET /api/v1/config
-│   └── api_test.go
+│   ├── api.go               # 自有 REST 接口：/api/v1/config、/api/v1/history/boundary
+│   ├── history.go           # 加入时间 KV 存储 + 历史边界计算
+│   ├── api_test.go
+│   └── history_test.go
 └── webapp/                  # 前端（React + TypeScript）
     ├── package.json / tsconfig.json / webpack.config.js / babel.config.js
     └── src/
@@ -47,9 +64,13 @@ customers-plugin/
         ├── resolve.ts                       # 合并「管理员默认值 + 用户偏好」
         ├── user_settings.ts                 # 读取 pp_<pluginId> 偏好
         ├── types/config.ts                  # 配置类型
+        ├── types/history.ts                 # 历史边界类型
         ├── types/mattermost-webapp/         # webapp 插件 API 类型
+        ├── history_api.ts                   # 拉取并缓存每个频道的历史边界
+        ├── history_gate.ts                  # 历史消息隐藏引擎（注入 CSS 规则）
         └── components/
             ├── time_format_controller.tsx   # 注册为 root component 的控制器
+            ├── history_gate_controller.tsx  # 历史隔离控制器（root component）
             ├── custom_format_setting.tsx    # 用户设置里的自定义格式输入框
             └── user_timezone_setting.tsx    # 用户设置里的时区输入框
 ```
@@ -101,6 +122,83 @@ GET  <siteURL>/plugins/com.example.customers-plugin/api/v1/config
 
 ---
 
+## 3.5 频道历史隔离是怎么做的（第二个功能，原理必读）
+
+### 3.5.1 为什么必须这样做
+
+先说结论：**Mattermost 10.12 的插件体系无法「按用户」在服务端过滤帖子**。我把能走的路都查了一遍：
+
+| 方案 | 结论 |
+| --- | --- |
+| `MessageWillBePosted` / `MessageHasBeenPosted` | 只在**发帖**时触发，与读取无关 |
+| `ServeHTTP` 钩子 | 官方文档明确：只有 `/plugins/{id}` 前缀的请求会路由到插件，**拦不到** `/api/v4/channels/{id}/posts` |
+| `MessagesWillBeConsumed(posts)` 钩子（9.3+） | 看着正是所需，但有三个硬伤：① 签名里**没有用户上下文**，无法区分请求者；② 只能**替换**帖子、不能删除（省略的帖子仍会返回）；③ 依赖实验 feature flag `FeatureFlags.ConsumePostHook`，默认关闭 |
+| webapp `registerPostTypeComponent` 等 | 只能「追加组件」，不能拦截或替换既有帖子 |
+
+所以唯一可行的架构是：**服务端提供权威边界，前端按边界隐藏**。这也是「前端隐藏」方案里能做到最强的一种 —— 边界不可伪造。
+
+### 3.5.2 数据流
+
+```
+用户加入频道
+   └─ 服务端钩子 UserHasJoinedChannel ──► KV: join_<userId>_<channelId> = { joinedAt }
+                                          （UserHasLeftChannel 时删除，重新加入会重新计时）
+
+浏览器进入频道
+   └─ GET /api/v1/history/boundary?channel_id=…
+        └─ 服务端读 KV → 按配置算出 cutoffAt → 返回 { enabled, cutoffAt, joinedAt }
+             └─ webapp history_gate 遍历 DOM 中的消息行
+                  └─ redux 查 post.create_at < cutoffAt ?
+                       └─ 是 → 写入一条 CSS 规则 [id="post_xxx"]{display:none !important}
+```
+
+### 3.5.3 DOM 约定（改版本时必须复查）
+
+`webapp/channels/src/components/post/post_component.tsx` 里：
+
+| 位置 | 元素 id |
+| --- | --- |
+| 中心频道 | `post_<postId>` |
+| 右侧栏（线程/置顶/已保存） | `rhsPost_<postId>` |
+| 搜索结果 | `searchResult_<postId>` |
+
+日期分隔符是 `.Separator.BasicSeparator`；频道头部容器是 `#channel-header`；消息列表容器是 `#postListContent`（开启虚拟化时是 `#virtualizedPostListContent`）。
+
+### 3.5.4 为什么用注入 CSS 规则而不是改节点样式
+
+- React 重渲染**不会**撤销一条外部样式表规则，而内联样式可能被覆盖、节点也可能被重建；
+- 消息列表是**虚拟化**的（`post_list_virtualized.tsx`），DOM 里通常只有几十行，规则体积很小；
+- 隐藏是"幂等"的：规则内容没变就不写 DOM，不会和 MutationObserver 互相触发。
+
+### 3.5.5 已知边界（诚实说明）
+
+- 这是**前端可见性控制**，不是加密。用户打开浏览器开发者工具、或直接调用 Mattermost API，仍可拿到被隐藏的帖子。如果你的场景要求"绝对取不到"，只能靠**私有频道 + 定期归档 / 到期重建频道**，插件层面做不到。
+- 插件**只记录安装之后发生的加入事件**。安装前就已在频道里的成员默认不受影响（配置 `存量成员如何处理 = 不限制`）。要让他们也生效，二选一：
+  - 把配置改成 `以插件启用时间为边界`（所有无记录的成员统一以插件首次启用时间划线）；
+  - 用管理接口精确回填（见下）。
+- 若某成员被移出后又重新加入，边界会按**新的加入时间**重算。
+
+### 3.5.6 管理接口：回填 / 清除某人的边界
+
+```bash
+# 设置：把 user_id 在 channel_id 的边界设为当前时间（或指定毫秒时间戳）
+curl -X POST 'https://mm.example.com/plugins/com.example.customers-plugin/api/v1/history/boundary' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <管理员个人访问令牌>' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -d '{"channelId":"<channel_id>","userId":"<user_id>","cutoffAt":0}'
+
+# 清除：恢复该成员在此频道的完整可见性
+curl -X POST '.../api/v1/history/boundary' \
+  -H 'Content-Type: application/json' -H 'Authorization: Bearer <令牌>' \
+  -H 'X-Requested-With: XMLHttpRequest' \
+  -d '{"channelId":"<channel_id>","userId":"<user_id>","clear":true}'
+```
+
+`cutoffAt: 0` 表示"取当前时间"。需要调用者是**系统管理员**（`manage_system` 权限），否则返回 403。
+
+---
+
 ## 4. 构建与安装
 
 ### 4.1 环境要求
@@ -116,7 +214,7 @@ cd customers-plugin
 make dist
 ```
 
-产物：`dist/com.example.customers-plugin-0.1.0.tar.gz`
+产物：`dist/com.example.customers-plugin-0.2.0.tar.gz`
 
 > **Windows 没有 make**：先装一个（`choco install make`，或 `scoop install make`）；装不了就直接跑等价脚本：
 > ```bash
@@ -178,6 +276,14 @@ cd webapp && npm run build:watch
 | `TimeZone` | text | 空 | 空 = 浏览器本地时区；否则填 IANA 时区名 |
 | `ApplyTo` | dropdown | `post` | `post` 仅消息时间；`all` 覆盖页面所有 `<time>` |
 | `AllowUserOverride` | bool | `true` | 是否允许用户自行覆盖 |
+| `HistoryLockEnabled` | bool | `true` | 历史隔离总开关 |
+| `HistoryMode` | dropdown | `since_join` | `since_join` 只看该成员加入之后；`recent_days` 所有人只看最近 N 天；`off` 不限制 |
+| `HistoryDays` | text | `7` | 仅 `recent_days` 生效，正整数 |
+| `LegacyMemberMode` | dropdown | `show_all` | 无加入记录的成员：`show_all` 不限制；`since_activation` 以插件启用时间为界 |
+| `HideInSearch` | bool | `true` | 是否连搜索结果、右侧栏（线程/置顶/已保存）一起隐藏 |
+| `HistoryNoticeEnabled` | bool | `true` | 是否在频道头部显示隐藏提示 |
+| `HistoryNoticeText` | text | 见控制台 | 提示文案 |
+| `ExemptSystemAdmins` | bool | `false` | 系统管理员是否豁免（便于排障） |
 
 ### 5.2 用户设置（当用户覆盖开启时）
 
@@ -247,6 +353,11 @@ MM-DD HH:mm               → 09-15 09:42
 | `unable to start plugin: ... unable to generate plugin checksum: open plugins/<id>/server/dist/plugin-linux-amd64: no such file or directory` | 包内二进制路径与 `plugin.json` 的 `server.executables` 声明不一致。必须是 `server/dist/plugin-<os>-<arch>`（注意 `dist` 这一层）。用 `tar -tzf dist/*.tar.gz` 核对；用本仓库的 `scripts/build.sh` 打包不会出现此问题，它结尾会自检 |
 | 启动时 `permission denied`（或 `fork/exec ... permission denied`） | 包内二进制缺少可执行位。Windows 上 `chmod 0755` 对 tar 无效，请改用 `scripts/build.sh`（内部走 `scripts/pack.py` 显式写权限位）或在 Linux/macOS 上 `make dist` |
 | `plugin.json` 找不到 / 包结构异常 | tar 的顶层目录必须且只能是插件 ID（如 `com.example.customers-plugin/`），不能多套一层 |
+| 历史消息没被隐藏 | ① `HistoryLockEnabled` 是否为 true、`HistoryMode` 是否不是 `off`；② 该成员是否有加入记录（**插件安装前就加入的成员默认不受限**，见 3.5.5）；③ 浏览器控制台看 `/api/v1/history/boundary?channel_id=…` 是否返回 `cutoffAt > 0`；④ 刚加入频道时刷新一次页面 |
+| `cutoffAt` 一直是 0 | 说明服务端没有该 (用户, 频道) 的加入记录。把成员移出再重新加入，或用管理接口回填 |
+| 隐藏了但提示条没出现 | 提示条挂在 `#channel-header` 上；确认 `HistoryNoticeEnabled` 为 true 且确实有消息被隐藏（提示条只在隐藏生效时出现） |
+| 日期分隔线还在 | 分隔线只在「其上所有消息都被隐藏」时才隐藏；如果只是部分隐藏则保留，属正常行为 |
+| 滚动到顶部时一直在加载 | 被隐藏的行高度为 0，虚拟化列表可能反复请求更早的消息。服务端返回空页后会自然停止；若影响体验，可把 `HistoryMode` 改成 `recent_days` 减少隐藏数量 |
 
 查看服务端日志：`make logs` 或 `make logs-watch`。
 

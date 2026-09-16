@@ -16,6 +16,12 @@ const (
 
 	// DefaultTimeFormat is used whenever the configured format is empty.
 	DefaultTimeFormat = "YYYY-MM-DD HH:mm"
+
+	// DefaultHistoryDays is the rolling window used by HistoryModeRecentDays.
+	DefaultHistoryDays = 7
+
+	// DefaultHistoryNoticeText is shown above the hidden part of a channel.
+	DefaultHistoryNoticeText = "此消息及之前的消息发送于你加入本频道之前，已隐藏"
 )
 
 // fixedPresets are offered to the user in the user-settings panel as a shortcut.
@@ -61,6 +67,41 @@ type configuration struct {
 
 	// AllowUserOverride decides whether users may override the admin defaults.
 	AllowUserOverride bool
+
+	// ---------------------------------------------------------------------
+	// Channel history visibility (second feature)
+	// ---------------------------------------------------------------------
+
+	// HistoryLockEnabled is the master switch for hiding channel history.
+	HistoryLockEnabled bool
+
+	// HistoryMode is one of HistoryModeOff, HistoryModeSinceJoin or HistoryModeRecentDays.
+	HistoryMode string
+
+	// HistoryDays is the textual admin setting for the rolling window; sanitize()
+	// parses it into historyDays.
+	HistoryDays string
+
+	// LegacyMemberMode decides what happens to members that joined before the
+	// plugin was installed: LegacyMemberShowAll or LegacyMemberSinceActivation.
+	LegacyMemberMode string
+
+	// HistoryNoticeEnabled shows a hint above the hidden part of the channel.
+	HistoryNoticeEnabled bool
+
+	// HistoryNoticeText is the hint text.
+	HistoryNoticeText string
+
+	// HideInSearch also hides affected messages in search results and the
+	// right-hand side (threads, pinned, saved) panels.
+	HideInSearch bool
+
+	// ExemptSystemAdmins lets system administrators see the full history.
+	ExemptSystemAdmins bool
+
+	// historyDays is the parsed value of HistoryDays. It is not deserialized
+	// from the admin console.
+	historyDays int
 }
 
 // Clone shallow copies the configuration. Your implementation may require a deep
@@ -82,6 +123,31 @@ func (c *configuration) sanitize() {
 	c.ApplyTo = strings.ToLower(strings.TrimSpace(c.ApplyTo))
 	if c.ApplyTo != ApplyToAll {
 		c.ApplyTo = ApplyToPost
+	}
+
+	c.sanitizeHistory()
+}
+
+// sanitizeHistory normalises the channel-history settings.
+func (c *configuration) sanitizeHistory() {
+	c.HistoryMode = strings.ToLower(strings.TrimSpace(c.HistoryMode))
+	switch c.HistoryMode {
+	case HistoryModeOff, HistoryModeRecentDays:
+		// valid
+	default:
+		c.HistoryMode = HistoryModeSinceJoin
+	}
+
+	c.historyDays = sanitizeHistoryDays(c.HistoryDays, DefaultHistoryDays)
+
+	c.LegacyMemberMode = strings.ToLower(strings.TrimSpace(c.LegacyMemberMode))
+	if c.LegacyMemberMode != LegacyMemberSinceActivation {
+		c.LegacyMemberMode = LegacyMemberShowAll
+	}
+
+	c.HistoryNoticeText = strings.TrimSpace(c.HistoryNoticeText)
+	if c.HistoryNoticeText == "" {
+		c.HistoryNoticeText = DefaultHistoryNoticeText
 	}
 }
 

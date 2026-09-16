@@ -7,6 +7,15 @@ export type Preset = {
     text: string;
 };
 
+/** Channel history visibility settings, served alongside the time settings. */
+export type HistorySettings = {
+    enabled: boolean;
+    mode: 'off' | 'since_join' | 'recent_days';
+    noticeEnabled: boolean;
+    noticeText: string;
+    hideInSearch: boolean;
+};
+
 export type ServerConfig = {
     enabled: boolean;
     timeFormat: string;
@@ -14,6 +23,9 @@ export type ServerConfig = {
     applyTo: 'post' | 'all';
     allowUserOverride: boolean;
     presets: Preset[];
+
+    /** Absent when talking to an older build of the plugin server. */
+    history?: HistorySettings;
 };
 
 /** Resolved configuration actually used to rewrite the DOM. */
