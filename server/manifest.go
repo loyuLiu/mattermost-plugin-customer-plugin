@@ -19,7 +19,7 @@ const manifestStr = `
   "homepage_url": "https://github.com/example/mattermost-plugin-customers",
   "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
   "icon_path": "assets/icon.svg",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "min_server_version": "10.0.0",
   "server": {
     "executables": {
@@ -93,6 +93,50 @@ const manifestStr = `
         "display_name": "允许用户自定义",
         "type": "bool",
         "help_text": "允许每个用户在自己的「设置」里覆盖默认格式与开关。",
+        "placeholder": "",
+        "default": true,
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "GroupedTimeEnabled",
+        "display_name": "合并消息用浮框显示时间",
+        "type": "bool",
+        "help_text": "同一人连续发送的消息会被合并成一个消息块，从第 2 条起默认不显示时间。开启后，鼠标移到这些合并消息上会以浮框显示该条的完整时间（格式与上面一致）。",
+        "placeholder": "",
+        "default": true,
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "GroupedTimePosition",
+        "display_name": "浮框位置",
+        "type": "dropdown",
+        "help_text": "cursor：跟随鼠标指针；left：贴在该条消息的左侧；right：浮在该条消息的右上角。",
+        "placeholder": "",
+        "default": "cursor",
+        "options": [
+          {
+            "display_name": "跟随鼠标（推荐）",
+            "value": "cursor"
+          },
+          {
+            "display_name": "消息左侧",
+            "value": "left"
+          },
+          {
+            "display_name": "消息右上角",
+            "value": "right"
+          }
+        ],
+        "hosting": "",
+        "secret": false
+      },
+      {
+        "key": "GroupedTimeHideInline",
+        "display_name": "隐藏悬停时的内联时间",
+        "type": "bool",
+        "help_text": "Mattermost 默认会在鼠标悬停时把时间插进消息标题行。开启后隐藏它，避免与浮框重复显示同一时间，也避免顶开版面。",
         "placeholder": "",
         "default": true,
         "hosting": "",

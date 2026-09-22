@@ -32,6 +32,9 @@ export const SELECTOR_ALL_TIMES = 'time[datetime]';
 /** How often we rescan the DOM as a safety net for virtualized lists. */
 export const RESYNC_INTERVAL_MS = 15000;
 
+/** Where the floating timestamp of a merged post is anchored by default. */
+export const DEFAULT_GROUPED_POSITION = 'cursor';
+
 export function preferenceKey(name: string): string {
     return `${PREFERENCE_CATEGORY}--${name}`;
 }

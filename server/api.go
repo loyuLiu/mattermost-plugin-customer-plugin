@@ -12,13 +12,21 @@ import (
 // publicConfig is what the webapp needs in order to render timestamps and to gate
 // channel history. Only data that is safe to expose to every logged-in user belongs here.
 type publicConfig struct {
-	Enabled           bool          `json:"enabled"`
-	TimeFormat        string        `json:"timeFormat"`
-	TimeZone          string        `json:"timeZone"`
-	ApplyTo           string        `json:"applyTo"`
-	AllowUserOverride bool          `json:"allowUserOverride"`
-	Presets           []Preset      `json:"presets"`
-	History           historyConfig `json:"history"`
+	Enabled           bool              `json:"enabled"`
+	TimeFormat        string            `json:"timeFormat"`
+	TimeZone          string            `json:"timeZone"`
+	ApplyTo           string            `json:"applyTo"`
+	AllowUserOverride bool              `json:"allowUserOverride"`
+	Presets           []Preset          `json:"presets"`
+	History           historyConfig     `json:"history"`
+	GroupedTime       groupedTimeConfig `json:"groupedTime"`
+}
+
+// groupedTimeConfig drives the floating timestamp shown for merged (consecutive) posts.
+type groupedTimeConfig struct {
+	Enabled    bool   `json:"enabled"`
+	Position   string `json:"position"`
+	HideInline bool   `json:"hideInline"`
 }
 
 // historyConfig is the history-gate part of the public configuration.
@@ -106,6 +114,11 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			NoticeEnabled: config.HistoryNoticeEnabled,
 			NoticeText:    config.HistoryNoticeText,
 			HideInSearch:  config.HideInSearch,
+		},
+		GroupedTime: groupedTimeConfig{
+			Enabled:    config.GroupedTimeEnabled,
+			Position:   config.GroupedTimePosition,
+			HideInline: config.GroupedTimeHideInline,
 		},
 	}
 

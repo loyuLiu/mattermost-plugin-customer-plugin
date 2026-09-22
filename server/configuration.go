@@ -14,6 +14,15 @@ const (
 	// ApplyToAll formats every <time datetime="..."> element rendered by the webapp.
 	ApplyToAll = "all"
 
+	// GroupedTimePositionCursor keeps the floating timestamp next to the pointer.
+	GroupedTimePositionCursor = "cursor"
+
+	// GroupedTimePositionLeft anchors it to the left edge of the merged post.
+	GroupedTimePositionLeft = "left"
+
+	// GroupedTimePositionRight anchors it to the top-right corner of the merged post.
+	GroupedTimePositionRight = "right"
+
 	// DefaultTimeFormat is used whenever the configured format is empty.
 	DefaultTimeFormat = "YYYY-MM-DD HH:mm"
 
@@ -67,6 +76,21 @@ type configuration struct {
 
 	// AllowUserOverride decides whether users may override the admin defaults.
 	AllowUserOverride bool
+
+	// ---------------------------------------------------------------------
+	// Merged (consecutive) posts: floating timestamp
+	// ---------------------------------------------------------------------
+
+	// GroupedTimeEnabled shows the timestamp of merged posts in a floating box.
+	GroupedTimeEnabled bool
+
+	// GroupedTimePosition is one of GroupedTimePositionCursor, GroupedTimePositionLeft
+	// or GroupedTimePositionRight.
+	GroupedTimePosition string
+
+	// GroupedTimeHideInline hides the timestamp Mattermost renders inside the post
+	// header while hovering a merged post, so the value is not shown twice.
+	GroupedTimeHideInline bool
 
 	// ---------------------------------------------------------------------
 	// Channel history visibility (second feature)
@@ -126,6 +150,18 @@ func (c *configuration) sanitize() {
 	}
 
 	c.sanitizeHistory()
+	c.sanitizeGroupedTime()
+}
+
+// sanitizeGroupedTime normalises the floating-timestamp settings.
+func (c *configuration) sanitizeGroupedTime() {
+	c.GroupedTimePosition = strings.ToLower(strings.TrimSpace(c.GroupedTimePosition))
+	switch c.GroupedTimePosition {
+	case GroupedTimePositionLeft, GroupedTimePositionRight:
+		// valid
+	default:
+		c.GroupedTimePosition = GroupedTimePositionCursor
+	}
 }
 
 // sanitizeHistory normalises the channel-history settings.

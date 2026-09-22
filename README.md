@@ -18,8 +18,22 @@
 | 自定义格式令牌 | 支持 `YYYY MM DD HH mm ss dddd MMMM A Z ...`，还支持方括号字面量（如 `YYYY年MM月DD日 HH:mm`） |
 | 时区控制 | 可留空（用浏览器本地时区），或强制到某个 IANA 时区（如 `Asia/Shanghai`、`UTC`） |
 | 作用范围 | 仅消息时间（`time.post__time`）或页面内所有 `<time>` 元素（含悬停提示、右侧边栏、搜索结果） |
+| 合并消息时间 | 同一人连续发言被合并成一个消息块后，从第 2 条起鼠标悬停时会用**浮框**显示该条的完整时间（格式与上面一致） |
 
-### 1.2 新成员历史消息隔离
+### 1.2 合并消息（连续发言）的浮框时间
+
+Mattermost 会把同一个人在 5 分钟内连续发送的多条消息合并成一个块：**只有第 1 条**显示头像和时间，第 2 条及以后要到鼠标悬停时才在标题行里插一个时间 —— 而且那个时间是原生格式，不受本插件格式控制的影响感知（视觉上很容易被忽略）。
+
+本插件改成：
+
+| 能力 | 说明 |
+| --- | --- |
+| 悬停浮框 | 鼠标移到合并消息（第 2 条起）上，浮出一个小框显示该条的完整时间，格式与全局格式一致（如 `2026-09-22 09:30:15`） |
+| 跟随鼠标 | 默认浮框跟着指针走；也可改成贴消息左侧或右上角 |
+| 隐藏内联时间 | 默认把 Mattermost 悬停时插进标题行的那个时间隐藏，避免同一时间显示两次、也避免顶开版面 |
+| 只认中心频道 | 只对中心频道消息流生效，右侧栏/搜索结果的时间本来就常驻显示，不动它们 |
+
+### 1.3 新成员历史消息隔离
 
 | 能力 | 说明 |
 | --- | --- |
@@ -61,6 +75,7 @@ customers-plugin/
         ├── hooks.ts                         # 拉取并缓存服务端配置
         ├── format.ts                        # 格式令牌解析器（基于 Intl.DateTimeFormat）
         ├── time_engine.ts                   # MutationObserver 驱动的 DOM 改写引擎
+        ├── grouped_time.ts                  # 合并消息（连续发言）悬停浮框时间引擎
         ├── resolve.ts                       # 合并「管理员默认值 + 用户偏好」
         ├── user_settings.ts                 # 读取 pp_<pluginId> 偏好
         ├── types/config.ts                  # 配置类型
@@ -119,6 +134,24 @@ GET  <siteURL>/plugins/com.example.customers-plugin/api/v1/config
 ### 3.4 用户偏好存在哪
 
 用官方的 `registry.registerUserSettings()` 注册的用户设置会**自动**存进 preference：category 为 `pp_<pluginId>`，name 为设置项名。前端直接 `useSelector` 读 `state.entities.preferences.myPreferences['pp_<id>--<name>']` 就能拿到，无需再写服务端接口。
+
+### 3.4.1 合并消息浮框时间（`webapp/src/grouped_time.ts`）
+
+DOM 事实（10.12 实测，`post_component.tsx`）：
+
+- 合并块里第 2 条起的消息带类名 **`same--root`**（`hasSameRoot()` 为真），同时 `hideProfilePicture` 为真 → `<PostTime>` **只在 `hover` 为真时才渲染**，即默认 DOM 里根本没有 `<time>`；
+- 所以不能靠「改写已有 `<time>`」来做，必须自己拿时间：**消息 id → redux `state.entities.posts.posts[id].create_at`**；
+- 消息行 id 约定：中心 `post_<id>`、右侧栏 `rhsPost_<id>`、搜索 `searchResult_<id>`；中心列表容器是 `#postListContent`（开启虚拟化时为 `#virtualizedPostListContent`）。
+
+引擎做的事：
+
+1. 全局委托一个 `mousemove`，用 `closest('[id^="post_"]')` 找到消息行；
+2. 判定「是合并块且不是回复」：`classList.contains('same--root') && !contains('post--comment')`，且必须在中心列表容器内；
+3. 用 `requestAnimationFrame` 把移动合并成一帧处理（快速划过不会刷爆主线程）；
+4. 只有一个浮框元素，复用并改位置；`pointer-events: none` 保证不吃点击和 hover；滚动 / 鼠标离开窗口 / 窗口失焦时立即隐藏；
+5. 贴边时把浮框收进视口；
+6. `hideInline` 为真时注入一条样式规则隐藏原生悬浮时间：
+   `#postListContent .post.same--root:not(.post--comment) .post__header time.post__time{display:none !important;}`（只隐藏时间，不隐藏标题行里的悬浮操作栏）。
 
 ---
 
@@ -214,7 +247,7 @@ cd customers-plugin
 make dist
 ```
 
-产物：`dist/com.example.customers-plugin-0.2.0.tar.gz`
+产物：`dist/com.example.customers-plugin-0.3.0.tar.gz`
 
 > **Windows 没有 make**：先装一个（`choco install make`，或 `scoop install make`）；装不了就直接跑等价脚本：
 > ```bash
@@ -261,6 +294,19 @@ make MM_SERVICESETTINGS_ENABLEDEVELOPER=true dist   # 只编译当前平台
 cd webapp && npm run build:watch
 ```
 
+### 4.6 测试
+
+```bash
+# 服务端（Go）
+cd server && GOOS=windows GOARCH=amd64 go test ./...
+
+# 前端浮框引擎（jsdom，需要 webapp 已 npm install）
+NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test-grouped-time.js
+```
+
+`scripts/test-grouped-time.js` 会先把 `grouped_time.ts`/`format.ts` 编译到临时目录，再在 jsdom 里搭一个和 10.12 同构的消息 DOM，覆盖：识别合并块、跟随鼠标与贴边收口、注入隐藏内联时间的样式、组首条 / 回复 / 右侧栏不显示、取不到时间不显示、关闭后彻底清理（20 项）。
+
 ---
 
 ## 5. 配置项
@@ -276,6 +322,9 @@ cd webapp && npm run build:watch
 | `TimeZone` | text | 空 | 空 = 浏览器本地时区；否则填 IANA 时区名 |
 | `ApplyTo` | dropdown | `post` | `post` 仅消息时间；`all` 覆盖页面所有 `<time>` |
 | `AllowUserOverride` | bool | `true` | 是否允许用户自行覆盖 |
+| `GroupedTimeEnabled` | bool | `true` | 合并消息（第 2 条起）悬停时用浮框显示该条时间 |
+| `GroupedTimePosition` | dropdown | `cursor` | 浮框位置：`cursor` 跟随鼠标；`left` 消息左侧；`right` 消息右上角 |
+| `GroupedTimeHideInline` | bool | `true` | 隐藏 Mattermost 悬停时插进标题行的内联时间，避免重复显示 |
 | `HistoryLockEnabled` | bool | `true` | 历史隔离总开关 |
 | `HistoryMode` | dropdown | `since_join` | `since_join` 只看该成员加入之后；`recent_days` 所有人只看最近 N 天；`off` 不限制 |
 | `HistoryDays` | text | `7` | 仅 `recent_days` 生效，正整数 |
@@ -358,6 +407,9 @@ MM-DD HH:mm               → 09-15 09:42
 | 隐藏了但提示条没出现 | 提示条挂在 `#channel-header` 上；确认 `HistoryNoticeEnabled` 为 true 且确实有消息被隐藏（提示条只在隐藏生效时出现） |
 | 日期分隔线还在 | 分隔线只在「其上所有消息都被隐藏」时才隐藏；如果只是部分隐藏则保留，属正常行为 |
 | 滚动到顶部时一直在加载 | 被隐藏的行高度为 0，虚拟化列表可能反复请求更早的消息。服务端返回空页后会自然停止；若影响体验，可把 `HistoryMode` 改成 `recent_days` 减少隐藏数量 |
+| 合并消息悬停没有浮框 | ① 只有**同一人 5 分钟内连续发送**、且处于合并块**第 2 条及以后**的消息才有（第 1 条本来就有常驻时间）；② 控制台 `GroupedTimeEnabled` 是否为 true；③ 用户在设置里把「时间格式来源」设成「关闭自定义显示」时整个功能（含浮框）都关掉；④ 只在中心频道生效，右侧栏/搜索结果不处理 |
+| 浮框里的时间格式不对 | 浮框与消息时间共用同一个格式与时区；改的是用户设置或控制台的 `TimeFormat` / `TimeZone`，不是浮框自己的配置 |
+| 悬停时标题行那个原生时间还在 | `GroupedTimeHideInline` 被关掉了，或页面没刷新（样式是插件启动后注入的，上传新版本后要 Ctrl+F5） |
 
 查看服务端日志：`make logs` 或 `make logs-watch`。
 

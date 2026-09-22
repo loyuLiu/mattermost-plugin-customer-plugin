@@ -16,6 +16,13 @@ export type HistorySettings = {
     hideInSearch: boolean;
 };
 
+/** Floating timestamp shown while hovering a merged (consecutive) post. */
+export type GroupedTimeSettings = {
+    enabled: boolean;
+    position: 'cursor' | 'left' | 'right';
+    hideInline: boolean;
+};
+
 export type ServerConfig = {
     enabled: boolean;
     timeFormat: string;
@@ -26,6 +33,9 @@ export type ServerConfig = {
 
     /** Absent when talking to an older build of the plugin server. */
     history?: HistorySettings;
+
+    /** Absent when talking to an older build of the plugin server. */
+    groupedTime?: GroupedTimeSettings;
 };
 
 /** Resolved configuration actually used to rewrite the DOM. */

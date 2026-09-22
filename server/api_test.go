@@ -79,6 +79,43 @@ func TestHandleGetConfig(t *testing.T) {
 	}
 }
 
+func TestGroupedTimeConfiguration(t *testing.T) {
+	cfg := configuration{GroupedTimePosition: "  LEFT "}
+	cfg.sanitize()
+	if cfg.GroupedTimePosition != GroupedTimePositionLeft {
+		t.Fatalf("expected %q, got %q", GroupedTimePositionLeft, cfg.GroupedTimePosition)
+	}
+
+	other := configuration{GroupedTimePosition: "nonsense"}
+	other.sanitize()
+	if other.GroupedTimePosition != GroupedTimePositionCursor {
+		t.Fatalf("expected fallback to %q, got %q", GroupedTimePositionCursor, other.GroupedTimePosition)
+	}
+
+	p := newTestPlugin(&configuration{
+		Enabled:               true,
+		TimeFormat:            "HH:mm",
+		GroupedTimeEnabled:    true,
+		GroupedTimePosition:   GroupedTimePositionRight,
+		GroupedTimeHideInline: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("Mattermost-User-ID", "user-id")
+	w := httptest.NewRecorder()
+
+	p.handleGetConfig(w, req)
+
+	var got publicConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !got.GroupedTime.Enabled || got.GroupedTime.Position != GroupedTimePositionRight || !got.GroupedTime.HideInline {
+		t.Fatalf("unexpected groupedTime payload: %+v", got.GroupedTime)
+	}
+}
+
 func TestMattermostAuthorizationRequired(t *testing.T) {
 	called := false
 	handler := (&Plugin{}).MattermostAuthorizationRequired(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
