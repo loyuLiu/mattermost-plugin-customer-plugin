@@ -8,7 +8,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.3.2",
+    "version": "0.4.3",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -126,6 +126,16 @@ const manifest = JSON.parse(`
                 "display_name": "隐藏悬停时的内联时间",
                 "type": "bool",
                 "help_text": "Mattermost 默认会在鼠标悬停时把时间插进消息标题行。开启后隐藏它，避免与浮框重复显示同一时间，也避免顶开版面。",
+                "placeholder": "",
+                "default": true,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "ReadStatusEnabled",
+                "display_name": "显示私信已讀/未讀标记",
+                "type": "bool",
+                "help_text": "开启后，私信（含群私信）中的每条消息会在右上角显示状态：未讀为黄色小圆圈 +「未讀」，已讀为绿色小圆圈 +「已讀」。公开与私有频道不显示标记。判定依据是看消息的人：别人发给你的消息，看「你」有没有读过；你发出去的消息，看「对方」有没有读过（群私信要所有人都读过才算已讀）。",
                 "placeholder": "",
                 "default": true,
                 "hosting": "",

@@ -8,7 +8,7 @@ import {
     TIME_SOURCE_OFF,
     TIME_SOURCE_SYSTEM,
 } from './constants';
-import type {EffectiveConfig, GroupedTimeSettings, ServerConfig} from './types/config';
+import type {EffectiveConfig, GroupedTimeSettings, ReadStatusSettings, ServerConfig} from './types/config';
 
 /** Values a user can store in her own preferences. */
 export type UserOverrides = {
@@ -80,4 +80,20 @@ export function resolveGroupedConfig(serverConfig: ServerConfig | null): Grouped
         position,
         hideInline: grouped.hideInline !== false,
     };
+}
+
+/**
+ * Settings of the dot marking unread posts.
+ *
+ * Older builds of the plugin server do not send `readStatus`; unlike the other
+ * sections this one then stays off, because it adds a visible marker to every post
+ * list and must not appear unless an administrator opted in.
+ */
+export function resolveReadStatus(serverConfig: ServerConfig | null): ReadStatusSettings {
+    const readStatus = serverConfig?.readStatus;
+    if (!readStatus) {
+        return {enabled: false};
+    }
+
+    return {enabled: readStatus.enabled === true};
 }

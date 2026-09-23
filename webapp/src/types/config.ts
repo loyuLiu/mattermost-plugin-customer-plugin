@@ -23,6 +23,11 @@ export type GroupedTimeSettings = {
     hideInline: boolean;
 };
 
+/** Dot shown on posts the current user has not read yet. */
+export type ReadStatusSettings = {
+    enabled: boolean;
+};
+
 export type ServerConfig = {
     enabled: boolean;
     timeFormat: string;
@@ -36,6 +41,12 @@ export type ServerConfig = {
 
     /** Absent when talking to an older build of the plugin server. */
     groupedTime?: GroupedTimeSettings;
+
+    /**
+     * Absent when talking to an older build of the plugin server, in which case the
+     * marker stays off.
+     */
+    readStatus?: ReadStatusSettings;
 };
 
 /** Resolved configuration actually used to rewrite the DOM. */

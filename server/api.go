@@ -9,6 +9,10 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
+// maxPeerMembers caps the membership page read for a conversation. Direct messages
+// hold two members and group messages at most eight, so one page is always enough.
+const maxPeerMembers = 100
+
 // publicConfig is what the webapp needs in order to render timestamps and to gate
 // channel history. Only data that is safe to expose to every logged-in user belongs here.
 type publicConfig struct {
@@ -20,6 +24,12 @@ type publicConfig struct {
 	Presets           []Preset          `json:"presets"`
 	History           historyConfig     `json:"history"`
 	GroupedTime       groupedTimeConfig `json:"groupedTime"`
+	ReadStatus        readStatusConfig  `json:"readStatus"`
+}
+
+// readStatusConfig drives the dot marking posts the current user has not read yet.
+type readStatusConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // groupedTimeConfig drives the floating timestamp shown for merged (consecutive) posts.
@@ -36,6 +46,17 @@ type historyConfig struct {
 	NoticeEnabled bool   `json:"noticeEnabled"`
 	NoticeText    string `json:"noticeText"`
 	HideInSearch  bool   `json:"hideInSearch"`
+}
+
+// peerReadStateResponse is the counterpart's read position in a direct or group
+// conversation: the point up to which *the other side* has read. `PeerLastViewedAt`
+// is 0 when there is no other participant or when the position is unknown.
+//
+// For group conversations it is the smallest position of all other participants, so a
+// message counts as read only once every counterpart has seen it.
+type peerReadStateResponse struct {
+	ChannelID        string `json:"channelId"`
+	PeerLastViewedAt int64  `json:"peerLastViewedAt"`
 }
 
 // boundaryResponse is the per-channel answer to "how much history may this user see".
@@ -71,6 +92,7 @@ func (p *Plugin) initRouter() *mux.Router {
 	apiRouter.HandleFunc("/config", p.handleGetConfig).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/history/boundary", p.handleGetBoundary).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/history/boundary", p.handleSetBoundary).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/read/peer", p.handleGetPeerReadState).Methods(http.MethodGet)
 
 	return router
 }
@@ -120,10 +142,85 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			Position:   config.GroupedTimePosition,
 			HideInline: config.GroupedTimeHideInline,
 		},
+		ReadStatus: readStatusConfig{
+			Enabled: config.ReadStatusEnabled,
+		},
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		p.API.LogError("failed to write configuration response", "error", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// peerLastViewedAt picks the read position of the other participants out of a channel's
+// membership list. The smallest one wins, so a group message stays "unread" until every
+// counterpart has seen it. The second return value reports whether the user is a member
+// of the conversation at all, which gates access to the endpoint.
+func peerLastViewedAt(members model.ChannelMembers, userID string) (int64, bool) {
+	isMember := false
+	var position int64
+
+	for _, member := range members {
+		if member.UserId == userID {
+			isMember = true
+			continue
+		}
+
+		if position == 0 || member.LastViewedAt < position {
+			position = member.LastViewedAt
+		}
+	}
+
+	return position, isMember
+}
+
+// handleGetPeerReadState returns how far the counterpart of a direct or group
+// conversation has read. It is what lets a user see whether *the other side* has read
+// the messages she sent; her own read position is already in the webapp store.
+func (p *Plugin) handleGetPeerReadState(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("Mattermost-User-ID")
+	channelID := r.URL.Query().Get("channel_id")
+	if channelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+
+	members, err := p.API.GetChannelMembers(channelID, 0, maxPeerMembers)
+	if err != nil {
+		p.API.LogError("failed to load channel members", "channel_id", channelID, "error", err.Error())
+		http.Error(w, "failed to load channel members", http.StatusInternalServerError)
+		return
+	}
+
+	position, isMember := peerLastViewedAt(members, userID)
+	if !isMember {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	channel, err := p.API.GetChannel(channelID)
+	if err != nil {
+		p.API.LogError("failed to load channel", "channel_id", channelID, "error", err.Error())
+		http.Error(w, "failed to load channel", http.StatusInternalServerError)
+		return
+	}
+
+	// Only conversations have a counterpart. Channels have no single "other side", so
+	// no peer position is exposed for them.
+	if channel.Type != model.ChannelTypeDirect && channel.Type != model.ChannelTypeGroup {
+		position = 0
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	response := peerReadStateResponse{
+		ChannelID:        channelID,
+		PeerLastViewedAt: position,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		p.API.LogError("failed to write peer read state response", "error", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

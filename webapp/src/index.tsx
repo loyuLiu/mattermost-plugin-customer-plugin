@@ -8,6 +8,7 @@ import type {GlobalState} from '@mattermost/types/store';
 import {getPluginUrl} from './base_url';
 import CustomFormatSetting from './components/custom_format_setting';
 import HistoryGateController from './components/history_gate_controller';
+import ReadStatusController from './components/read_status_controller';
 import TimeFormatController from './components/time_format_controller';
 import UserTimeZoneSetting from './components/user_timezone_setting';
 import {
@@ -83,6 +84,9 @@ export default class Plugin {
 
         // Second feature: keep channel history away from members that joined later.
         registry.registerRootComponent(HistoryGateController);
+
+        // Third feature: mark posts the current user has not read yet.
+        registry.registerRootComponent(ReadStatusController);
 
         if (config?.enabled && config.allowUserOverride) {
             registry.registerUserSettings(userSettings);

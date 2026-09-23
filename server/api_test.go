@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func newTestPlugin(cfg *configuration) *Plugin {
@@ -116,6 +118,41 @@ func TestGroupedTimeConfiguration(t *testing.T) {
 	}
 }
 
+func TestReadStatusConfiguration(t *testing.T) {
+	p := newTestPlugin(&configuration{
+		Enabled:           true,
+		ReadStatusEnabled: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("Mattermost-User-ID", "user-id")
+	w := httptest.NewRecorder()
+
+	p.handleGetConfig(w, req)
+
+	var got publicConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !got.ReadStatus.Enabled {
+		t.Fatal("expected readStatus to be enabled")
+	}
+
+	off := newTestPlugin(&configuration{Enabled: true})
+	w2 := httptest.NewRecorder()
+	off.handleGetConfig(w2, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+
+	var got2 publicConfig
+	if err := json.Unmarshal(w2.Body.Bytes(), &got2); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if got2.ReadStatus.Enabled {
+		t.Fatal("expected readStatus to stay disabled by default")
+	}
+}
+
 func TestMattermostAuthorizationRequired(t *testing.T) {
 	called := false
 	handler := (&Plugin{}).MattermostAuthorizationRequired(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
@@ -132,4 +169,58 @@ func TestMattermostAuthorizationRequired(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
+}
+
+func TestPeerLastViewedAt(t *testing.T) {
+	me := "me"
+	peer := "peer"
+	other := "other"
+
+	t.Run("direct message uses the counterpart", func(t *testing.T) {
+		members := model.ChannelMembers{
+			{UserId: me, LastViewedAt: 500},
+			{UserId: peer, LastViewedAt: 300},
+		}
+
+		position, isMember := peerLastViewedAt(members, me)
+		if !isMember {
+			t.Fatal("expected the requesting user to be a member")
+		}
+		if position != 300 {
+			t.Fatalf("expected 300, got %d", position)
+		}
+	})
+
+	t.Run("group message uses the least advanced counterpart", func(t *testing.T) {
+		members := model.ChannelMembers{
+			{UserId: me, LastViewedAt: 900},
+			{UserId: peer, LastViewedAt: 700},
+			{UserId: other, LastViewedAt: 400},
+		}
+
+		position, _ := peerLastViewedAt(members, me)
+		if position != 400 {
+			t.Fatalf("expected 400 (the least advanced), got %d", position)
+		}
+	})
+
+	t.Run("own membership is never counted", func(t *testing.T) {
+		members := model.ChannelMembers{{UserId: me, LastViewedAt: 100}}
+
+		position, isMember := peerLastViewedAt(members, me)
+		if !isMember {
+			t.Fatal("expected the requesting user to be a member")
+		}
+		if position != 0 {
+			t.Fatalf("expected 0 when there is no counterpart, got %d", position)
+		}
+	})
+
+	t.Run("non member is rejected", func(t *testing.T) {
+		members := model.ChannelMembers{{UserId: peer, LastViewedAt: 100}}
+
+		if _, isMember := peerLastViewedAt(members, me); isMember {
+			t.Fatal("expected the requesting user not to be a member")
+		}
+	})
 }

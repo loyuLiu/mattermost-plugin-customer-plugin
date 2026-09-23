@@ -93,6 +93,14 @@ type configuration struct {
 	GroupedTimeHideInline bool
 
 	// ---------------------------------------------------------------------
+	// Read status (third feature)
+	// ---------------------------------------------------------------------
+
+	// ReadStatusEnabled marks posts the current user has not read yet with a dot in
+	// the top-right corner of the post.
+	ReadStatusEnabled bool
+
+	// ---------------------------------------------------------------------
 	// Channel history visibility (second feature)
 	// ---------------------------------------------------------------------
 
