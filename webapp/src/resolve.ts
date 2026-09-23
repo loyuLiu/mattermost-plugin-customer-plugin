@@ -2,13 +2,20 @@
 // See LICENSE.txt for license information.
 
 import {
+    DEFAULT_BULK_DELETE_MAX_POSTS,
     DEFAULT_FORMAT,
     DEFAULT_GROUPED_POSITION,
     TIME_SOURCE_CUSTOM,
     TIME_SOURCE_OFF,
     TIME_SOURCE_SYSTEM,
 } from './constants';
-import type {EffectiveConfig, GroupedTimeSettings, ReadStatusSettings, ServerConfig} from './types/config';
+import type {
+    BulkDeleteSettings,
+    EffectiveConfig,
+    GroupedTimeSettings,
+    ReadStatusSettings,
+    ServerConfig,
+} from './types/config';
 
 /** Values a user can store in her own preferences. */
 export type UserOverrides = {
@@ -96,4 +103,22 @@ export function resolveReadStatus(serverConfig: ServerConfig | null): ReadStatus
     }
 
     return {enabled: readStatus.enabled === true};
+}
+
+/**
+ * Settings of the bulk delete feature.
+ *
+ * Deleting other people's messages is destructive and irreversible, so this one stays
+ * off unless the administrator switched it on in the plugin settings — including when
+ * talking to an older build of the plugin server that never sends `bulkDelete`.
+ */
+export function resolveBulkDelete(serverConfig: ServerConfig | null): BulkDeleteSettings {
+    const bulkDelete = serverConfig?.bulkDelete;
+    if (!bulkDelete) {
+        return {enabled: false, maxPosts: DEFAULT_BULK_DELETE_MAX_POSTS};
+    }
+
+    const maxPosts = Number(bulkDelete.maxPosts) > 0 ? Number(bulkDelete.maxPosts) : DEFAULT_BULK_DELETE_MAX_POSTS;
+
+    return {enabled: bulkDelete.enabled === true, maxPosts};
 }

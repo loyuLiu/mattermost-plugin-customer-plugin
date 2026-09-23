@@ -31,6 +31,9 @@ const (
 
 	// DefaultHistoryNoticeText is shown above the hidden part of a channel.
 	DefaultHistoryNoticeText = "此消息及之前的消息发送于你加入本频道之前，已隐藏"
+
+	// DefaultBulkDeleteMaxPosts caps how many posts one request may delete.
+	DefaultBulkDeleteMaxPosts = 500
 )
 
 // fixedPresets are offered to the user in the user-settings panel as a shortcut.
@@ -101,6 +104,17 @@ type configuration struct {
 	ReadStatusEnabled bool
 
 	// ---------------------------------------------------------------------
+	// Bulk delete (fourth feature)
+	// ---------------------------------------------------------------------
+
+	// BulkDeleteEnabled is the master switch for the bulk delete endpoints. It ships
+	// disabled: deleting other people's messages is destructive and irreversible.
+	BulkDeleteEnabled bool
+
+	// BulkDeleteMaxPosts caps how many posts one request may delete.
+	BulkDeleteMaxPosts int
+
+	// ---------------------------------------------------------------------
 	// Channel history visibility (second feature)
 	// ---------------------------------------------------------------------
 
@@ -159,6 +173,19 @@ func (c *configuration) sanitize() {
 
 	c.sanitizeHistory()
 	c.sanitizeGroupedTime()
+	c.sanitizeBulkDelete()
+}
+
+// sanitizeBulkDelete clamps the batch size. A missing or nonsensical value falls back
+// to the default rather than to "unlimited".
+func (c *configuration) sanitizeBulkDelete() {
+	if c.BulkDeleteMaxPosts <= 0 {
+		c.BulkDeleteMaxPosts = DefaultBulkDeleteMaxPosts
+	}
+
+	if c.BulkDeleteMaxPosts > hardMaxPosts {
+		c.BulkDeleteMaxPosts = hardMaxPosts
+	}
 }
 
 // sanitizeGroupedTime normalises the floating-timestamp settings.

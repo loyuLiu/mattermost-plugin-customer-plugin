@@ -1,9 +1,11 @@
 # Customers Plugin（Mattermost 插件）
 
-面向 **Mattermost 10.12.x** 的客户化定制插件，目前提供两个功能：
+面向 **Mattermost 10.12.x** 的客户化定制插件，目前提供四个功能：
 
 1. **接管聊天窗口的时间显示** —— 管理员在系统控制台统一配置显示格式（如 `2026-09-15 09:42`），用户也可以在自己的「设置」里按个人偏好覆盖。
 2. **新成员历史消息隔离** —— 新加入频道的成员看不到其加入之前的历史消息。
+3. **私信已读 / 未读标记** —— 私信里每条消息右上角显示「已讀」或「未讀」：别人发的看**你**有没有读过，你发的看**对方**有没有读过。
+4. **批量删除消息** —— 管理员在控制台按条件（会话 / 发送者 / 关键词 / 时间范围）批量删除，也可在会话里勾选消息删除。
 
 ---
 
@@ -43,6 +45,35 @@ Mattermost 会把同一个人在 5 分钟内连续发送的多条消息合并成
 | 管理员回填 | 老成员可通过管理接口 `POST /api/v1/history/boundary` 精确设置边界，不必先移出频道 |
 | 提示条 | 频道头部可显示一条提示，说明更早的消息已被隐藏 |
 
+### 1.4 私信已读 / 未读标记
+
+只对**私信**生效（单人群私信 `D`、群私信 `G`），公开与私有频道不显示标记。
+
+| 能力 | 说明 |
+| --- | --- |
+| 收到的消息 | 按「你」的已读位置判定：`create_at > myMembers[channelId].last_viewed_at` → 未读 |
+| 发出的消息 | 按「对方」的已读位置判定：`create_at > peerLastViewedAt` → 对方还没读 |
+| 显示 | 未读 = 黄色小圆圈 +「未讀」；已读 = 绿色小圆圈 +「已讀」，都在消息行右上角 |
+| 群私信 | 取除自己外**最小**的已读位置，即所有对方都读过才算已读 |
+
+> 自己发的消息若用「自己」的已读位置判定，发出瞬间就是已读，毫无意义 —— 所以判定按作者分流，这是本功能的核心规则。
+
+### 1.5 批量删除消息
+
+两个入口，共用同一套服务端权限校验：
+
+| 入口 | 谁能用 | 做什么 |
+| --- | --- | --- |
+| 系统控制台 → 插件 → Customers Plugin → **批量删除消息** | 系统管理员 | 选会话 + 可选（发送者 / 关键词 / 起止时间）→ 先预览条数 → 二次确认后删除 |
+| 频道头 🗑 按钮 → 勾选消息 | 系统管理员、频道管理员、以及能删自己消息的用户 | 消息行左上角出现复选框，底部工具条提供「全选当前页 / 清空 / 删除选中 / 退出」 |
+
+| 能力 | 说明 |
+| --- | --- |
+| 默认关闭 | 删除是硬删除、不可恢复，`BulkDeleteEnabled` 默认为 `false`，必须显式开启 |
+| 单次上限 | 默认 500 条（`BulkDeleteMaxPosts` 可配，硬顶 10000），避免误操作波及过大 |
+| 权限 | 逐条交给 Mattermost 判定，无权限的计入 `denied` 返回，不静默跳过 |
+| 删除节奏 | 每条之间 sleep 10ms，避免一次性冲刷上千条 WebSocket 广播 |
+
 ---
 
 ## 2. 目录结构
@@ -61,10 +92,12 @@ customers-plugin/
 │   ├── main.go              # plugin.ClientMain 入口
 │   ├── plugin.go            # Plugin 结构体 + OnActivate/ServeHTTP
 │   ├── configuration.go     # 系统控制台配置加载、校验、默认值
-│   ├── api.go               # 自有 REST 接口：/api/v1/config、/api/v1/history/boundary
+│   ├── api.go               # 自有 REST 接口：config、history/boundary、read/peer、posts/*、channels
 │   ├── history.go           # 加入时间 KV 存储 + 历史边界计算
+│   ├── bulk_delete.go       # 批量删除：按条件遍历收集 + 逐条权限校验
 │   ├── api_test.go
-│   └── history_test.go
+│   ├── history_test.go
+│   └── bulk_delete_test.go
 └── webapp/                  # 前端（React + TypeScript）
     ├── package.json / tsconfig.json / webpack.config.js / babel.config.js
     └── src/
@@ -76,6 +109,9 @@ customers-plugin/
         ├── format.ts                        # 格式令牌解析器（基于 Intl.DateTimeFormat）
         ├── time_engine.ts                   # MutationObserver 驱动的 DOM 改写引擎
         ├── grouped_time.ts                  # 合并消息（连续发言）悬停浮框时间引擎
+        ├── read_status.ts                   # 私信已读/未读徽标引擎
+        ├── bulk_select.ts                   # 会话内勾选删除引擎 + 按钮与工具条共享的 store
+        ├── bulk_delete_api.ts               # 批量删除接口封装（query / purge / delete / channels）
         ├── resolve.ts                       # 合并「管理员默认值 + 用户偏好」
         ├── user_settings.ts                 # 读取 pp_<pluginId> 偏好
         ├── types/config.ts                  # 配置类型
@@ -86,6 +122,10 @@ customers-plugin/
         └── components/
             ├── time_format_controller.tsx   # 注册为 root component 的控制器
             ├── history_gate_controller.tsx  # 历史隔离控制器（root component）
+            ├── read_status_controller.tsx   # 已读/未读控制器（root component）
+            ├── bulk_delete_bar.tsx          # 勾选模式的浮动工具条（root component）
+            ├── bulk_delete_panel.tsx        # 系统控制台的批量删除面板（custom setting）
+            ├── icons.tsx                    # 内联 SVG 图标（垃圾桶）
             ├── custom_format_setting.tsx    # 用户设置里的自定义格式输入框
             └── user_timezone_setting.tsx    # 用户设置里的时区输入框
 ```
@@ -126,8 +166,11 @@ PostView → Post → PostHeader → PostTime（webapp/channels/src/components/p
 
 ```
 GET  <siteURL>/plugins/com.example.customers-plugin/api/v1/config
-响应 { enabled, timeFormat, timeZone, applyTo, allowUserOverride, presets[] }
+响应 { enabled, timeFormat, timeZone, applyTo, allowUserOverride, presets[],
+       history{...}, groupedTime{...}, readStatus{enabled}, bulkDelete{enabled, maxPosts} }
 ```
+
+后四个是各功能自己的配置段。**旧版本服务端不会下发新字段**，所以前端的 `resolve*()` 一律把它们当作「未配置」处理：历史隔离与浮框时间沿用默认值开启，已读标记与批量删除则**保持关闭**（会往界面上加东西 / 有破坏性的功能，不默认打开）。
 
 该路由由 Mattermost 服务器代理，只有携带有效会话（且带 `X-Requested-With: XMLHttpRequest`）的请求才会带 `Mattermost-User-ID` 请求头，否则返回 401。
 
@@ -146,12 +189,12 @@ DOM 事实（10.12 实测，`post_component.tsx`）：
 引擎做的事：
 
 1. 全局委托一个 `mousemove`，用 `closest('[id^="post_"]')` 找到消息行；
-2. 判定「是合并块且不是回复」：`classList.contains('same--root') && !contains('post--comment')`，且必须在中心列表容器内；
+2. 判定**只认 `same--root`**（它是 10.12 里「块内第 2 条起」的统一标记：连续 root 同作者的第 2 条起、以及线程内联回复的第 2 条起都带它），且必须在中心列表容器内；注意线程**第一条**回复是 `other--root`（`hasSameRoot()` 对 `isFirstReply` 直接返回 false），所以块首保留内联时间、不弹浮框；
 3. 用 `requestAnimationFrame` 把移动合并成一帧处理（快速划过不会刷爆主线程）；
 4. 只有一个浮框元素，复用并改位置；`pointer-events: none` 保证不吃点击和 hover；滚动 / 鼠标离开窗口 / 窗口失焦时立即隐藏；
 5. 贴边时把浮框收进视口；
 6. `hideInline` 为真时注入一条样式规则隐藏原生悬浮时间：
-   `#postListContent .post.same--root:not(.post--comment) .post__header time.post__time{display:none !important;}`（只隐藏时间，不隐藏标题行里的悬浮操作栏）。
+   `#postListContent .post.same--root .post__header time.post__time{display:none !important;}`（只隐藏时间，不隐藏标题行里的悬浮操作栏）。
 
 ---
 
@@ -232,6 +275,79 @@ curl -X POST '.../api/v1/history/boundary' \
 
 ---
 
+## 3.6 已读 / 未读标记是怎么做的（第三个功能）
+
+### 3.6.1 判定按作者分流
+
+| 消息 | 看谁的已读位置 | 从哪里取 |
+| --- | --- | --- |
+| 别人发给我的 | 我自己的 | redux：`entities.channels.myMembers[channelId].last_viewed_at` |
+| **我发出去的** | **对方的** | 插件接口 `GET /api/v1/read/peer` |
+
+### 3.6.2 为什么对方的已读位置必须走服务端
+
+redux 里只有 `myMembers`（**自己的**成员记录）。`membersInChannel` 存着别人的成员记录，但它 ① 不保证已加载；② 对方查看会话时不会推送更新到你的浏览器 —— 拿它做判定会得到过期值。
+
+所以服务端加了一个接口：
+
+```
+GET  <siteURL>/plugins/com.example.customers-plugin/api/v1/read/peer?channel_id=…
+响应 { "channelId": "…", "peerLastViewedAt": 1789440120123 }
+```
+
+- 实现：`p.API.GetChannelMembers(channelID, 0, 100)` 拿到成员列表 → 排除请求者 → 取**最小**的 `LastViewedAt`（群私信因此要所有人都读过才算已读）；
+- 请求者不是该会话成员 → `403`；非私信频道 → 返回 `0`（不暴露任何东西）。
+
+前端 controller 用 `Map<channelId, {at, fetchedAt}>` 缓存，4 秒节流轮询当前会话，值变化才触发重扫。**位置未知时不打标，不猜。**
+
+### 3.6.3 徽标为什么插在消息行上
+
+- 不能插 `.post__header`：那是 React 管的，hover 时会重建，插进去会闪；
+- 定位用的 `position:relative` 走 **inline style**，不能用 class —— React 会连同 `className` 一起覆盖；
+- 用 `dataset.readState` 记状态，只有状态变化才重建节点，所以「未读 → 已读」和反向都能同步更新文字与颜色。
+
+---
+
+## 3.7 批量删除是怎么做的（第四个功能）
+
+### 3.7.1 接口
+
+| 接口 | 作用 |
+| --- | --- |
+| `POST /api/v1/posts/query` | 按条件预览（统计条数、返回前 10 条样本），不删 |
+| `POST /api/v1/posts/purge` | 按条件删除 |
+| `POST /api/v1/posts/delete` | 按显式 `postIds` 删除（会话勾选走这条） |
+| `GET  /api/v1/channels` | 控制台面板的会话下拉数据 |
+
+请求体：`{ channelId, userId, keyword, timeFrom, timeTo, limit }` 或 `{ postIds: [...] }`（后者优先）。
+
+### 3.7.2 为什么不用 `SearchPostsInTeam`
+
+插件 API 里有 `SearchPostsInTeam(teamID, paramsList)`，参数天然支持关键词 / 作者 / 频道 / 日期，看起来正合适。但它内部按自己的分页取结果，**插件拿不到完整集合**，删不全也不知道漏了多少。
+
+所以改成 `GetPostsForChannel(channelID, page, perPage)` 分页（200/页）遍历 + 本地过滤。由此带来一个必须处理的正确性细节：
+
+> 遍历是从最新往回走，遇到 `createAt < timeFrom` 就能停 —— **前提是这一页确实是按时间倒序**。所以先用 `isDescending()` 检测顺序，只有在确认倒序时才允许提前退出，否则继续翻页，避免漏删。
+
+### 3.7.3 权限为什么逐条交给 Mattermost
+
+不自己判断「是不是管理员」，而是问服务器：
+
+```go
+HasPermissionTo(actorID, PermissionManageSystem)                            // 系统管理员：全放行
+HasPermissionToChannel(actorID, channelID, PermissionDeletePost)            // 自己的消息
+HasPermissionToChannel(actorID, channelID, PermissionDeleteOthersPosts)     // 别人的消息
+```
+
+好处是「频道管理员能不能删别人的消息」完全由服务器的权限方案决定（高级权限开没开、角色怎么配），插件不用硬编码，也不会和服务器的判定不一致。没权限的消息计入 `denied` 返回给调用方，**不静默跳过**。
+
+### 3.7.4 前端两个入口的接线方式
+
+- 控制台面板：`registry.registerAdminConsoleCustomSetting('BulkDeletePanel', Component)` —— 收的是 **React 组件**（不是 iframe URL），key 必须存在于 `settings_schema.settings`（`type: "custom"`）；
+- 频道头按钮：`registerChannelHeaderButtonAction(icon, action, ...)` 的回调**没有参数**，没法往工具条传 state，所以按钮和工具条之间靠 `bulk_select.ts` 里的模块级 store（`subscribe/get/set`）通信。
+
+---
+
 ## 4. 构建与安装
 
 ### 4.1 环境要求
@@ -247,7 +363,7 @@ cd customers-plugin
 make dist
 ```
 
-产物：`dist/com.example.customers-plugin-0.3.0.tar.gz`
+产物：`dist/com.example.customers-plugin-<version>.tar.gz`（当前版本见 `plugin.json` 的 `version`，如 `0.5.1`）
 
 > **Windows 没有 make**：先装一个（`choco install make`，或 `scoop install make`）；装不了就直接跑等价脚本：
 > ```bash
@@ -300,12 +416,25 @@ cd webapp && npm run build:watch
 # 服务端（Go）
 cd server && GOOS=windows GOARCH=amd64 go test ./...
 
-# 前端浮框引擎（jsdom，需要 webapp 已 npm install）
+# 前端引擎（jsdom，需要 webapp 已 npm install）
 NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
-  node scripts/test-grouped-time.js
+  node scripts/test-grouped-time.js     # 合并消息浮框：25 项
+NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test-read-status.js      # 私信已读/未读徽标：40 项
+NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test-bulk-select.js      # 会话内勾选删除：31 项
+
+# 类型与风格
+cd webapp && npx tsc --noEmit && npx eslint --ext .ts --ext .tsx src --quiet
 ```
 
-`scripts/test-grouped-time.js` 会先把 `grouped_time.ts`/`format.ts` 编译到临时目录，再在 jsdom 里搭一个和 10.12 同构的消息 DOM，覆盖：识别合并块、跟随鼠标与贴边收口、注入隐藏内联时间的样式、组首条 / 回复 / 右侧栏不显示、取不到时间不显示、关闭后彻底清理（20 项）。
+三个脚本都是同一套路：先把对应 `.ts` 编译到临时目录，再在 jsdom 里搭一个和 10.12 同构的消息 DOM。
+
+| 脚本 | 覆盖 |
+| --- | --- |
+| `test-grouped-time.js` | 识别合并块、跟随鼠标与贴边收口、注入隐藏内联时间的样式、块首条 / 右侧栏不显示、取不到时间不显示、关闭后彻底清理 |
+| `test-read-status.js` | **收到的消息按我的位置判定 / 发出的消息按对方的位置判定**、推进任一侧的已读位置只影响对应一侧、未知位置时不打标且只请求一次、黄绿主题色、双向切换、停止后清理 |
+| `test-bulk-select.js` | 复选框注入与幂等、勾选/取消、全选/清空、虚拟列表新行自动补框、重扫不丢选中状态、停止后清理、按钮与工具条共享的 store |
 
 ---
 
@@ -325,6 +454,10 @@ NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
 | `GroupedTimeEnabled` | bool | `true` | 合并消息（第 2 条起）悬停时用浮框显示该条时间 |
 | `GroupedTimePosition` | dropdown | `cursor` | 浮框位置：`cursor` 跟随鼠标；`left` 消息左侧；`right` 消息右上角 |
 | `GroupedTimeHideInline` | bool | `true` | 隐藏 Mattermost 悬停时插进标题行的内联时间，避免重复显示 |
+| `ReadStatusEnabled` | bool | `true` | 私信消息右上角显示「已讀 / 未讀」徽标（频道消息不显示） |
+| `BulkDeleteEnabled` | bool | `false` | 批量删除总开关。**默认关闭**，删除不可恢复，请确认后再开 |
+| `BulkDeleteMaxPosts` | number | `500` | 单次请求最多删除多少条（硬上限 10000） |
+| `BulkDeletePanel` | custom | — | 控制台里的批量删除面板，由前端组件渲染（不是普通设置项） |
 | `HistoryLockEnabled` | bool | `true` | 历史隔离总开关 |
 | `HistoryMode` | dropdown | `since_join` | `since_join` 只看该成员加入之后；`recent_days` 所有人只看最近 N 天；`off` 不限制 |
 | `HistoryDays` | text | `7` | 仅 `recent_days` 生效，正整数 |
@@ -373,7 +506,7 @@ MM-DD HH:mm               → 09-15 09:42
 
 ---
 
-## 6. 新增第二个功能时怎么做
+## 6. 新增下一个功能时怎么做
 
 插件骨架已经把「服务端配置 → REST 下发 → webapp 消费」这条路打通了，加功能只需：
 
@@ -381,7 +514,9 @@ MM-DD HH:mm               → 09-15 09:42
 2. `plugin.json` 的 `settings_schema.settings` 增加对应项；
 3. 若前端需要，扩展 `server/api.go` 的 `publicConfig`；
 4. webapp 侧在 `webapp/src/index.tsx` 里再注册一个组件，例如：
-   - `registry.registerChannelHeaderButtonAction(...)`：频道头部加按钮
+   - `registry.registerRootComponent(...)`：挂一个不可见组件，用 MutationObserver 改 DOM（本插件三个功能都这么干）
+   - `registry.registerChannelHeaderButtonAction(...)`：频道头部加按钮（回调**无参数**，跨组件通信要用模块级 store）
+   - `registry.registerAdminConsoleCustomSetting(key, Component)`：控制台设置项换成自定义 React 组件
    - `registry.registerPostDropdownMenuAction(...)`：消息右键菜单加项
    - `registry.registerCustomRoute(...)`：加一个整页接口
    - `registry.registerWebSocketEventHandler(...)`：监听服务端事件
@@ -410,6 +545,11 @@ MM-DD HH:mm               → 09-15 09:42
 | 合并消息悬停没有浮框 | ① 只有**同一人 5 分钟内连续发送**、且处于合并块**第 2 条及以后**的消息才有（第 1 条本来就有常驻时间）；② 控制台 `GroupedTimeEnabled` 是否为 true；③ 用户在设置里把「时间格式来源」设成「关闭自定义显示」时整个功能（含浮框）都关掉；④ 只在中心频道生效，右侧栏/搜索结果不处理 |
 | 浮框里的时间格式不对 | 浮框与消息时间共用同一个格式与时区；改的是用户设置或控制台的 `TimeFormat` / `TimeZone`，不是浮框自己的配置 |
 | 悬停时标题行那个原生时间还在 | `GroupedTimeHideInline` 被关掉了，或页面没刷新（样式是插件启动后注入的，上传新版本后要 Ctrl+F5） |
+| 私信里没有已读/未读徽标 | ① `ReadStatusEnabled` 是否为 true；② **只有私信**（`D`/`G`）才显示，公开与私有频道一律不显示；③ 自己发的消息要等**对方**打开过这个会话才有值，在此之前不打标；④ 看控制台 `/api/v1/read/peer?channel_id=…` 是否返回非 0 的 `peerLastViewedAt` |
+| 自己发的消息一直显示「未讀」 | 对方还没打开过这个会话。对方的已读位置只在对方进入会话时才推进，属正常行为 |
+| 频道头没有批量删除按钮 | 按钮只在 `BulkDeleteEnabled` 为 **true** 时注册（否则点了也会被 403）。改完设置要保存并 Ctrl+F5 |
+| 批量删除接口返回 403 | ① `BulkDeleteEnabled` 是否开启；② 删除别人的消息需要 `delete_others_posts`（系统管理员或有该权限的频道管理员）；③ 响应里的 `denied` 会告诉你有多少条因为无权限被跳过 |
+| 预览条数是 0 | 检查 `channelId` 是否选对、时间范围是否用本地时间（面板里填的是本地时间，会转成毫秒时间戳）、关键词大小写不敏感但必须是消息正文的子串 |
 
 查看服务端日志：`make logs` 或 `make logs-watch`。
 

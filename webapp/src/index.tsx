@@ -1,12 +1,17 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import React from 'react';
 import manifest from './manifest';
 import type {Store} from 'redux';
 import type {GlobalState} from '@mattermost/types/store';
 
 import {getPluginUrl} from './base_url';
+import {setBulkSelectActive} from './bulk_select';
+import BulkDeleteBar from './components/bulk_delete_bar';
+import BulkDeletePanel from './components/bulk_delete_panel';
 import CustomFormatSetting from './components/custom_format_setting';
+import TrashIcon from './components/icons';
 import HistoryGateController from './components/history_gate_controller';
 import ReadStatusController from './components/read_status_controller';
 import TimeFormatController from './components/time_format_controller';
@@ -21,6 +26,7 @@ import {
     TIME_SOURCE_SYSTEM,
 } from './constants';
 import {fetchServerConfig, primeServerConfig} from './hooks';
+import {resolveBulkDelete} from './resolve';
 import type {PluginRegistry} from './types/mattermost-webapp';
 
 const userSettings = {
@@ -87,6 +93,21 @@ export default class Plugin {
 
         // Third feature: mark posts the current user has not read yet.
         registry.registerRootComponent(ReadStatusController);
+
+        // Fourth feature: bulk delete, from the admin console and from a conversation.
+        registry.registerRootComponent(BulkDeleteBar);
+        registry.registerAdminConsoleCustomSetting('BulkDeletePanel', BulkDeletePanel, {showTitle: true});
+
+        // The header button is only offered when the feature is switched on; otherwise
+        // clicking it would open a mode whose every request is rejected.
+        if (resolveBulkDelete(config).enabled) {
+            registry.registerChannelHeaderButtonAction(
+                <TrashIcon/>,
+                () => setBulkSelectActive(true),
+                '批量删除消息',
+                '勾选消息并批量删除',
+            );
+        }
 
         if (config?.enabled && config.allowUserOverride) {
             registry.registerUserSettings(userSettings);

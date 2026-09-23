@@ -6,7 +6,7 @@
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "release_notes_url": "",
     "icon_path": "assets/icon.svg",
-    "version": "0.4.3",
+    "version": "0.5.1",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -112,6 +112,26 @@
                 "type": "bool",
                 "help_text": "开启后，私信（含群私信）中的每条消息会在右上角显示状态：未讀为黄色小圆圈 +「未讀」，已讀为绿色小圆圈 +「已讀」。公开与私有频道不显示标记。判定依据是看消息的人：别人发给你的消息，看「你」有没有读过；你发出去的消息，看「对方」有没有读过（群私信要所有人都读过才算已讀）。",
                 "default": true
+            },
+            {
+                "key": "BulkDeleteEnabled",
+                "display_name": "启用批量删除消息",
+                "type": "bool",
+                "help_text": "开启后，系统管理员可在下方「批量删除消息」面板按条件删除消息，频道管理员也可在会话中勾选消息删除。删除不可恢复，请谨慎开启。",
+                "default": false
+            },
+            {
+                "key": "BulkDeleteMaxPosts",
+                "display_name": "单次删除上限",
+                "type": "number",
+                "help_text": "一次请求最多删除多少条消息，用于防止误操作波及面过大。留空或填 0 表示 500 条，最大 10000 条。",
+                "default": 500
+            },
+            {
+                "key": "BulkDeletePanel",
+                "display_name": "批量删除消息",
+                "type": "custom",
+                "help_text": "按会话、发送者、关键词和时间范围筛选消息，先预览数量再执行删除。"
             },
             {
                 "key": "HistoryLockEnabled",

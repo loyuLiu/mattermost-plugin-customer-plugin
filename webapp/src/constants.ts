@@ -35,6 +35,9 @@ export const RESYNC_INTERVAL_MS = 15000;
 /** Where the floating timestamp of a merged post is anchored by default. */
 export const DEFAULT_GROUPED_POSITION = 'cursor';
 
+/** Fallback batch size for bulk deletion, used when the server sends nothing. */
+export const DEFAULT_BULK_DELETE_MAX_POSTS = 500;
+
 export function preferenceKey(name: string): string {
     return `${PREFERENCE_CATEGORY}--${name}`;
 }

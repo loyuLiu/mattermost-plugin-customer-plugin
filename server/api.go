@@ -25,6 +25,13 @@ type publicConfig struct {
 	History           historyConfig     `json:"history"`
 	GroupedTime       groupedTimeConfig `json:"groupedTime"`
 	ReadStatus        readStatusConfig  `json:"readStatus"`
+	BulkDelete        bulkDeleteConfig  `json:"bulkDelete"`
+}
+
+// bulkDeleteConfig drives the bulk delete panel and the channel selection mode.
+type bulkDeleteConfig struct {
+	Enabled bool `json:"enabled"`
+	MaxPost int  `json:"maxPosts"`
 }
 
 // readStatusConfig drives the dot marking posts the current user has not read yet.
@@ -93,6 +100,12 @@ func (p *Plugin) initRouter() *mux.Router {
 	apiRouter.HandleFunc("/history/boundary", p.handleGetBoundary).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/history/boundary", p.handleSetBoundary).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/read/peer", p.handleGetPeerReadState).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/posts/query", p.handlePreviewPosts).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/posts/purge", p.handlePurgePosts).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/posts/delete", p.handleDeletePosts).Methods(http.MethodPost)
+
+	// Feeds the channel picker of the admin console panel.
+	apiRouter.HandleFunc("/channels", p.handleListChannels).Methods(http.MethodGet)
 
 	return router
 }
@@ -144,6 +157,10 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		},
 		ReadStatus: readStatusConfig{
 			Enabled: config.ReadStatusEnabled,
+		},
+		BulkDelete: bulkDeleteConfig{
+			Enabled: config.BulkDeleteEnabled,
+			MaxPost: config.BulkDeleteMaxPosts,
 		},
 	}
 
