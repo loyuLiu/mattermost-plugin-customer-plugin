@@ -23,6 +23,17 @@ const (
 	HistoryModeRecentDays = "recent_days"
 )
 
+// How to render a post row while its channel's boundary is still in flight.
+const (
+	// HistoryPendingBlank keeps the row's box but hides its content, so history
+	// cannot leak and the scroll position does not move.
+	HistoryPendingBlank = "blank"
+
+	// HistoryPendingShow renders the row normally. History can be visible for one
+	// round trip; only useful when blanking causes trouble in a custom theme.
+	HistoryPendingShow = "show"
+)
+
 // How to treat members that joined a channel before this plugin was installed,
 // i.e. members without a recorded join time.
 const (

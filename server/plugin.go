@@ -25,6 +25,9 @@ type Plugin struct {
 
 	// hist persists channel-join timestamps used by the history gate.
 	hist *historyStore
+
+	// nav persists the product navigation shown in the global header.
+	nav *navigationStore
 }
 
 // store returns the history store, wiring it up to the plugin API on first use.
@@ -38,6 +41,19 @@ func (p *Plugin) store() *historyStore {
 	}
 
 	return p.hist
+}
+
+// navigation returns the product navigation store, wiring it up on first use.
+func (p *Plugin) navigation() *navigationStore {
+	if p.nav == nil {
+		if p.API == nil {
+			return nil
+		}
+
+		p.nav = &navigationStore{backend: p.API}
+	}
+
+	return p.nav
 }
 
 // OnActivate is invoked when the plugin is activated. If an error is returned,

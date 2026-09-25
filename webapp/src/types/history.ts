@@ -17,10 +17,32 @@ export type HistoryBoundary = {
     serverTime: number;
 };
 
+/** Batch answer from `POST /api/v1/history/boundaries`. */
+export type HistoryBoundaries = {
+    mode: string;
+
+    /** Server clock at the time of the response. */
+    serverTime: number;
+
+    /**
+     * Cutoff per requested channel. A channel missing from this map is *unknown*,
+     * not unrestricted — callers must keep treating it as gated.
+     */
+    cutoffs: Record<string, number>;
+};
+
 /** Minimal post information the gate needs from the redux store. */
 export type PostMeta = {
     createAt: number;
     channelId: string;
+
+    /**
+     * True for posts the gate must never hide even when they predate the
+     * cutoff — currently the member's own "you were added to the channel"
+     * marker, which is created at the join instant and is meant to stay
+     * visible as the first row of the gated range.
+     */
+    forceVisible?: boolean;
 };
 
 /**

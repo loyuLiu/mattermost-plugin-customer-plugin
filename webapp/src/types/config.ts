@@ -14,6 +14,9 @@ export type HistorySettings = {
     noticeEnabled: boolean;
     noticeText: string;
     hideInSearch: boolean;
+
+    /** What a row does while its boundary is in flight. Absent on older servers. */
+    pendingPolicy?: 'blank' | 'show';
 };
 
 /** Floating timestamp shown while hovering a merged (consecutive) post. */
@@ -86,6 +89,49 @@ export type ServerConfig = {
 
     /** Absent when talking to an older build of the plugin server. */
     bulkDelete?: BulkDeleteSettings;
+
+    /**
+     * Absent when talking to an older build of the plugin server, in which case the
+     * button is still offered: it hides itself while no entry is configured, so an
+     * old server simply means "no entries" rather than a broken button.
+     */
+    productNav?: ProductNavSettings;
+};
+
+/** One entry of the product navigation panel. */
+export type NavLink = {
+    id: string;
+    name: string;
+    url: string;
+
+    /** Logo shown next to the caption. Empty means "draw the fallback tile". */
+    iconUrl?: string;
+};
+
+/** A named group of links. */
+export type NavCategory = {
+    id: string;
+    name: string;
+    links: NavLink[];
+};
+
+/** Entries of the product navigation, as persisted by the server. */
+export type ProductNavDocument = {
+    categories: NavCategory[];
+};
+
+/** The button injected into the global header. */
+export type ProductNavSettings = {
+    enabled: boolean;
+
+    /** Image shown on the button. Empty means "use the built-in icon". */
+    iconUrl: string;
+
+    /**
+     * Links shown on one row of a category. Absent on older servers, in which
+     * case the engine falls back to 5.
+     */
+    linksPerRow?: number;
 };
 
 /** Resolved configuration actually used to rewrite the DOM. */

@@ -1,11 +1,10 @@
+"use strict";
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
-
-import type {CutoffLookup, PostMeta} from './types/history';
-
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HistoryGate = exports.planViewportRecovery = void 0;
 const STYLE_ID = 'customers-plugin-history-gate-style';
 const NOTICE_ID = 'customers-plugin-history-notice';
-
 /**
  * Mattermost renders posts with predictable element ids:
  *   center channel -> post_<id>, right-hand side -> rhsPost_<id>,
@@ -14,7 +13,6 @@ const NOTICE_ID = 'customers-plugin-history-notice';
  */
 const POST_ROW_SELECTOR = '[id^="post_"],[id^="rhsPost_"],[id^="searchResult_"]';
 const POST_ID_PATTERN = /^(post|rhsPost|searchResult)_(.+)$/;
-
 /**
  * Prefix Mattermost puts in front of every system ("user activity") post id.
  *
@@ -26,22 +24,18 @@ const POST_ID_PATTERN = /^(post|rhsPost|searchResult)_(.+)$/;
  * every "X joined the channel" row sailed straight through the gate.
  */
 const COMBINED_PREFIX = 'user-activity-';
-
 /**
  * The real post ids behind a row id: one for an ordinary post, several for a
  * combined system row (`user-activity-<newest>_..._<oldest>`).
  */
-function expandPostIds(postId: string): string[] {
+function expandPostIds(postId) {
     if (!postId.startsWith(COMBINED_PREFIX)) {
         return [postId];
     }
-
     return postId.slice(COMBINED_PREFIX.length).split('_').filter((id) => id.length > 0);
 }
-
 /** Container of the (virtualized) centre post list. */
 const POST_LIST_IDS = ['postListContent', 'virtualizedPostListContent'];
-
 /**
  * The element that actually scrolls: the outer div of `DynamicVirtualizedList`
  * (post_list_virtualized.tsx passes `id='postListScrollContainer'` to it).
@@ -50,10 +44,8 @@ const POST_LIST_IDS = ['postListContent', 'virtualizedPostListContent'];
  * make sure a scroll correction only ever touches the centre channel.
  */
 const SCROLLER_ID = 'postListScrollContainer';
-
 /** How often a scroll may trigger a re-sync, in milliseconds. */
 const SCROLL_SYNC_MS = 150;
-
 /**
  * How long a user gesture keeps the scroll recovery quiet, in milliseconds.
  *
@@ -63,7 +55,6 @@ const SCROLL_SYNC_MS = 150;
  * automatic fix (right after loading a channel) and drops the fights.
  */
 const GESTURE_SUPPRESS_MS = 800;
-
 /**
  * Root id of the "channel intro" row (welcome text of a fresh channel), rendered
  * by `ChannelIntroMessage` whenever the list sits at the channel's oldest post.
@@ -74,7 +65,6 @@ const GESTURE_SUPPRESS_MS = 800;
  * it is collected separately from the post scan.
  */
 const INTRO_ID = 'channelIntro';
-
 /**
  * The virtualised list wraps every item in `<div class="item_measurer">` and
  * measures **that wrapper** to size the row
@@ -85,39 +75,12 @@ const INTRO_ID = 'channelIntro';
  * Those gaps are what "the channel looks blank until you scroll" is made of.
  */
 const ROW_HOST_SELECTOR = '.item_measurer';
-
 /** Rows definitely hidden by the gate. Applied to the whole measured wrapper. */
 const HIDDEN_ATTR = 'data-customers-history-hidden';
-
 /** Rows waiting for their boundary. Keeps its box, loses its content. */
 const PENDING_ATTR = 'data-customers-history-pending';
-
 /** Full rescan interval, as a safety net for virtualised rows. */
 const RESCAN_MS = 3000;
-
-export type GateProvider = {
-    /** Looks a post up in the redux store. */
-    getPostMeta: (postId: string) => PostMeta | undefined;
-
-    /** Cutoff for a channel; undefined when it has not been fetched yet. */
-    getCutoff: (channelId: string) => CutoffLookup;
-
-    /** Asks the caller to fetch the cutoff; the gate re-syncs afterwards. */
-    requestCutoff: (channelId: string) => void;
-
-    /**
-     * The channel currently open in the centre view. Used to decide whether the
-     * channel-intro row belongs to a gated channel. Optional so that older
-     * harnesses keep working; when absent the intro is left alone.
-     */
-    getCurrentChannelId?: () => string | undefined;
-};
-
-/** What the gate wants to do with the scroll position of the post list. */
-export type ViewportPlan =
-    | {mode: 'none'}
-    | {mode: 'bottom'};
-
 /**
  * Decides whether the post list has to be sent back to its bottom.
  *
@@ -131,72 +94,41 @@ export type ViewportPlan =
  * into. The visible messages are always the newest ones, i.e. the bottom of the
  * list, so that is the only direction worth moving.
  */
-export function planViewportRecovery(
-    viewportTop: number,
-    viewportBottom: number,
-    visibleTop: number,
-    visibleBottom: number,
-    hasVisible: boolean,
-): ViewportPlan {
+function planViewportRecovery(viewportTop, viewportBottom, visibleTop, visibleBottom, hasVisible) {
     if (!hasVisible) {
-        return {mode: 'bottom'};
+        return { mode: 'bottom' };
     }
-
     // Any overlap at all means the viewport holds a message: leave it alone.
     if (visibleBottom > viewportTop && visibleTop < viewportBottom) {
-        return {mode: 'none'};
+        return { mode: 'none' };
     }
-
-    return {mode: 'bottom'};
+    return { mode: 'bottom' };
 }
-
+exports.planViewportRecovery = planViewportRecovery;
 /**
  * The element whose height the virtualised list will measure for this row.
  *
  * Falls back to the row itself outside the virtualised list (right-hand side,
  * search results, the non-virtualised layout), where there is no wrapper.
  */
-function rowHost(row: HTMLElement): HTMLElement {
-    return row.closest<HTMLElement>(ROW_HOST_SELECTOR) ?? row;
+function rowHost(row) {
+    var _a;
+    return (_a = row.closest(ROW_HOST_SELECTOR)) !== null && _a !== void 0 ? _a : row;
 }
-
 /** True for the date separator rows (`Separator` + `BasicSeparator`). */
-function isSeparator(el: HTMLElement): boolean {
+function isSeparator(el) {
     return el.classList.contains('BasicSeparator');
 }
-
 /**
  * The post row held by one list item, or null when the item is something else
  * (a date separator, the new-messages line, the "load more" row).
  */
-function rowIn(item: HTMLElement): HTMLElement | null {
+function rowIn(item) {
     if (POST_ID_PATTERN.test(item.id)) {
         return item;
     }
-
-    return item.querySelector<HTMLElement>(POST_ROW_SELECTOR);
+    return item.querySelector(POST_ROW_SELECTOR);
 }
-
-/** How a post row is treated while its channel's boundary is still unknown.
- *
- * - `show`    renders normally; history can leak for one round trip.
- * - `blank`   hides the content but keeps the row's height, so the scroll position
- *             stays put. This is what removes both the leak and the scroll jump.
- */
-export type PendingPolicy = 'show' | 'blank';
-
-export type GateOptions = {
-    provider: GateProvider;
-    noticeEnabled: boolean;
-    noticeText: string;
-
-    /** When false, only the centre channel is filtered. */
-    hideInSearch: boolean;
-
-    /** What to do with rows whose boundary is still in flight. Defaults to `blank`. */
-    pendingPolicy?: PendingPolicy;
-};
-
 /**
  * Hides posts that the current user is not allowed to see.
  *
@@ -204,37 +136,45 @@ export type GateOptions = {
  * styles: React cannot undo it on re-render, and the virtualised post list only
  * keeps a few dozen rows in the DOM, so the rule stays small.
  */
-export class HistoryGate {
-    private provider: GateProvider;
-    private noticeEnabled: boolean;
-    private noticeText: string;
-    private hideInSearch: boolean;
-
-    private style: HTMLStyleElement | null = null;
-    private observer: MutationObserver | null = null;
-    private interval: number | null = null;
-    private lastRule = '';
-    private hiddenSeparators: HTMLElement[] = [];
-    private marked: HTMLElement[] = [];
-    private pendingPolicy: PendingPolicy;
-    private started = false;
-
-    private lastGestureAt = 0;
-    private lastScrollSyncAt = 0;
-    private programmaticUntil = 0;
-
-    constructor(options: GateOptions) {
+class HistoryGate {
+    constructor(options) {
+        var _a;
+        this.style = null;
+        this.observer = null;
+        this.interval = null;
+        this.lastRule = '';
+        this.hiddenSeparators = [];
+        this.marked = [];
+        this.started = false;
+        this.lastGestureAt = 0;
+        this.lastScrollSyncAt = 0;
+        this.programmaticUntil = 0;
+        /** Re-syncs after a scroll, but at most once per `SCROLL_SYNC_MS`. */
+        this.onScroll = () => {
+            if (Date.now() < this.programmaticUntil) {
+                return;
+            }
+            this.lastGestureAt = Date.now();
+            const now = Date.now();
+            if (now - this.lastScrollSyncAt < SCROLL_SYNC_MS) {
+                return;
+            }
+            this.lastScrollSyncAt = now;
+            this.sync();
+        };
+        /** Remembers that a human is driving, so the recovery stays out of the way. */
+        this.onGesture = () => {
+            this.lastGestureAt = Date.now();
+        };
         this.provider = options.provider;
         this.noticeEnabled = options.noticeEnabled;
         this.noticeText = options.noticeText;
         this.hideInSearch = options.hideInSearch;
-        this.pendingPolicy = options.pendingPolicy ?? 'blank';
+        this.pendingPolicy = (_a = options.pendingPolicy) !== null && _a !== void 0 ? _a : 'blank';
     }
-
-    start(): void {
+    start() {
         this.started = true;
         this.ensureStyle();
-
         // Synced straight from the observer callback rather than through a timer.
         //
         // Timing requirement, in order:
@@ -247,93 +187,78 @@ export class HistoryGate {
         // paint, so syncing here satisfies both. One callback already covers a
         // whole React commit, so this does not degenerate into one scan per node.
         this.observer = new MutationObserver(() => this.sync());
-
         // Only childList matters: hiding is done through a stylesheet rule and
         // separator visibility through the style attribute, neither of which
         // produces childList mutations (so this cannot feed back on itself).
-        this.observer.observe(document.body, {childList: true, subtree: true});
-
+        this.observer.observe(document.body, { childList: true, subtree: true });
         // Scrolls change which rows exist (virtualisation) without necessarily
         // producing the childList mutations the observer sees, and they are the
         // moment a stale row height becomes visible. Capture, so that the inner
         // scroller is caught too.
-        window.addEventListener('scroll', this.onScroll, {capture: true, passive: true});
-        window.addEventListener('wheel', this.onGesture, {capture: true, passive: true});
-        window.addEventListener('touchmove', this.onGesture, {capture: true, passive: true});
-        window.addEventListener('keydown', this.onGesture, {capture: true});
-
+        window.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
+        window.addEventListener('wheel', this.onGesture, { capture: true, passive: true });
+        window.addEventListener('touchmove', this.onGesture, { capture: true, passive: true });
+        window.addEventListener('keydown', this.onGesture, { capture: true });
         this.interval = window.setInterval(() => this.sync(), RESCAN_MS);
         this.sync();
     }
-
-    stop(): void {
+    stop() {
+        var _a, _b;
         this.started = false;
-        this.observer?.disconnect();
+        (_a = this.observer) === null || _a === void 0 ? void 0 : _a.disconnect();
         this.observer = null;
-
-        window.removeEventListener('scroll', this.onScroll, {capture: true});
-        window.removeEventListener('wheel', this.onGesture, {capture: true});
-        window.removeEventListener('touchmove', this.onGesture, {capture: true});
-        window.removeEventListener('keydown', this.onGesture, {capture: true});
-
+        window.removeEventListener('scroll', this.onScroll, { capture: true });
+        window.removeEventListener('wheel', this.onGesture, { capture: true });
+        window.removeEventListener('touchmove', this.onGesture, { capture: true });
+        window.removeEventListener('keydown', this.onGesture, { capture: true });
         if (this.interval !== null) {
             window.clearInterval(this.interval);
             this.interval = null;
         }
-
         this.restoreSeparators();
         this.removeNotice();
         this.clearMarks();
-
-        this.style?.remove();
+        (_b = this.style) === null || _b === void 0 ? void 0 : _b.remove();
         this.style = null;
         this.lastRule = '';
     }
-
     /**
      * Recomputes the hidden set and applies it. Safe to call at any time.
      *
      * Returns the number of rows that were actually removed from view, which the
      * caller can use to decide whether the "history hidden" notice applies.
      */
-    sync(): number {
+    sync() {
+        var _a, _b;
         if (!this.started) {
             return 0;
         }
-
-        const hidden = new Set<HTMLElement>();
-        const pending = new Set<HTMLElement>();
-
+        const hidden = new Set();
+        const pending = new Set();
         // Rows that are real, hidden post rows — the intro row does not count,
         // or the "history hidden" notice would show merely because the welcome
         // text was removed.
         let hiddenPostRows = 0;
-
-        document.querySelectorAll<HTMLElement>(POST_ROW_SELECTOR).forEach((row) => {
+        document.querySelectorAll(POST_ROW_SELECTOR).forEach((row) => {
             const match = POST_ID_PATTERN.exec(row.id);
             if (!match) {
                 return;
             }
-
             const [, location, postId] = match;
             if (!this.hideInSearch && location !== 'post') {
                 return;
             }
-
             // A system row can stand for several posts. They are always from the
             // same channel, so the first one that resolves picks the cutoff.
             const metas = expandPostIds(postId).
                 map((id) => this.provider.getPostMeta(id)).
-                filter((meta): meta is PostMeta => Boolean(meta));
-
+                filter((meta) => Boolean(meta));
             if (metas.length === 0) {
                 return;
             }
-
             if (metas.some((meta) => meta.forceVisible)) {
                 return;
             }
-
             const channelId = metas[0].channelId;
             const cutoff = this.provider.getCutoff(channelId);
             if (cutoff === undefined) {
@@ -343,10 +268,8 @@ export class HistoryGate {
                 if (this.pendingPolicy === 'blank') {
                     pending.add(rowHost(row));
                 }
-
                 return;
             }
-
             // Hide as soon as any covered post is history. The combined row would
             // show it anyway, and its own timestamp is the *oldest* post of the
             // group, so this is exactly what Mattermost renders for it.
@@ -355,64 +278,37 @@ export class HistoryGate {
                 hiddenPostRows++;
             }
         });
-
         // The intro row: hide it when the channel being viewed is gated. With the
         // post stream filtered the intro only appears once the list has walked all
         // the way down to the first kept post, and it sits right above the join
         // marker — visible to the member, meant to be removed.
         const introHost = this.introRowHost();
         if (introHost) {
-            const channelId = this.provider.getCurrentChannelId?.();
+            const channelId = (_b = (_a = this.provider).getCurrentChannelId) === null || _b === void 0 ? void 0 : _b.call(_a);
             const cutoff = channelId === undefined ? undefined : this.provider.getCutoff(channelId);
             if (cutoff !== undefined && cutoff > 0) {
                 hidden.add(introHost);
             }
         }
-
         this.applyRules(hidden, pending);
         this.restoreSeparators();
         this.hideLeadingSeparators(hidden);
         this.recoverViewport(hidden);
         this.updateNotice(hiddenPostRows > 0);
-
         return hiddenPostRows;
     }
-
     /**
      * The measured wrapper around the channel-intro row, or null when it is not
      * rendered right now (it only exists while the list is at the oldest post).
      */
-    private introRowHost(): HTMLElement | null {
+    introRowHost() {
+        var _a;
         const intro = document.getElementById(INTRO_ID);
         if (!intro) {
             return null;
         }
-
-        return intro.closest<HTMLElement>(ROW_HOST_SELECTOR) ?? intro;
+        return (_a = intro.closest(ROW_HOST_SELECTOR)) !== null && _a !== void 0 ? _a : intro;
     }
-
-    /** Re-syncs after a scroll, but at most once per `SCROLL_SYNC_MS`. */
-    private onScroll = (): void => {
-        if (Date.now() < this.programmaticUntil) {
-            return;
-        }
-
-        this.lastGestureAt = Date.now();
-
-        const now = Date.now();
-        if (now - this.lastScrollSyncAt < SCROLL_SYNC_MS) {
-            return;
-        }
-
-        this.lastScrollSyncAt = now;
-        this.sync();
-    };
-
-    /** Remembers that a human is driving, so the recovery stays out of the way. */
-    private onGesture = (): void => {
-        this.lastGestureAt = Date.now();
-    };
-
     /**
      * Brings the visible messages back on screen when the viewport is staring at
      * nothing but collapsed history.
@@ -433,78 +329,63 @@ export class HistoryGate {
      * and it converges in one step. It is additionally muted for a moment after
      * every user gesture, so it can never fight somebody who is scrolling.
      */
-    private recoverViewport(hidden: Set<HTMLElement>): void {
+    recoverViewport(hidden) {
         if (hidden.size === 0) {
             return;
         }
-
         if (Date.now() - this.lastGestureAt < GESTURE_SUPPRESS_MS) {
             return;
         }
-
         const scroller = document.getElementById(SCROLLER_ID);
         const container = this.listContainer();
         if (!scroller || !container || container.parentElement !== scroller) {
             return;
         }
-
         const box = scroller.getBoundingClientRect();
         if (box.height <= 0) {
             // Not laid out (or a headless DOM): every rect is 0 and any decision
             // made from them would be noise.
             return;
         }
-
         // Visible messages are the newest ones, so they are always one contiguous
         // block. Its bounding box is enough to decide whether anything is on screen.
         let top = Infinity;
         let bottom = -Infinity;
         let found = false;
-
-        for (const child of Array.from(container.children) as HTMLElement[]) {
+        for (const child of Array.from(container.children)) {
             const row = rowIn(child);
             if (!row || hidden.has(rowHost(row))) {
                 continue;
             }
-
             const rect = row.getBoundingClientRect();
             if (rect.bottom <= rect.top) {
                 continue;
             }
-
             if (rect.top < top) {
                 top = rect.top;
             }
-
             if (rect.bottom > bottom) {
                 bottom = rect.bottom;
             }
-
             found = true;
         }
-
         const plan = planViewportRecovery(box.top, box.bottom, top, bottom, found);
         if (plan.mode === 'none') {
             return;
         }
-
         this.programmaticUntil = Date.now() + 200;
         scroller.scrollTop = scroller.scrollHeight;
     }
-
-    private ensureStyle(): void {
+    ensureStyle() {
         if (this.style) {
             return;
         }
-
         const style = document.createElement('style');
         style.id = STYLE_ID;
-
         // Lives in <head> so that writing to it does not re-trigger the observer.
         document.head.appendChild(style);
         this.style = style;
     }
-
     /**
      * Writes the two rules that make up the gate.
      *
@@ -516,18 +397,14 @@ export class HistoryGate {
      * is why this has to be a `data-` attribute rather than an id selector: the row
      * wrapper carries no id.
      */
-    private applyRules(hidden: Set<HTMLElement>, pending: Set<HTMLElement>): void {
+    applyRules(hidden, pending) {
         if (!this.style) {
             return;
         }
-
         this.clearMarks();
-
         let rule = '';
-
         if (hidden.size > 0) {
             hidden.forEach((row) => row.setAttribute(HIDDEN_ATTR, 'true'));
-
             // Deliberately *not* `display:none`.
             //
             // The row's height is recorded in `DynamicVirtualizedList`'s
@@ -560,37 +437,30 @@ export class HistoryGate {
                 'visibility:hidden !important;' +
                 '}';
         }
-
         if (pending.size > 0) {
             pending.forEach((row) => row.setAttribute(PENDING_ATTR, 'true'));
             rule += `[${PENDING_ATTR}]{visibility:hidden !important;}`;
         }
-
         this.marked = [...hidden, ...pending];
-
         if (rule === this.lastRule) {
             return;
         }
-
         this.style.textContent = rule;
         this.lastRule = rule;
     }
-
-    private clearMarks(): void {
+    clearMarks() {
         this.marked.forEach((row) => {
             row.removeAttribute(HIDDEN_ATTR);
             row.removeAttribute(PENDING_ATTR);
         });
         this.marked = [];
     }
-
-    private restoreSeparators(): void {
+    restoreSeparators() {
         this.hiddenSeparators.forEach((el) => {
             el.style.removeProperty('display');
         });
         this.hiddenSeparators = [];
     }
-
     /**
      * Hides date separators that sit above the first visible post, i.e. the
      * separators belonging entirely to hidden history.
@@ -598,15 +468,13 @@ export class HistoryGate {
      * The whole measured wrapper has to go, exactly like for post rows — a
      * separator left at its natural height contributes the same kind of gap.
      */
-    private hideLeadingSeparators(hidden: Set<HTMLElement>): void {
+    hideLeadingSeparators(hidden) {
         const container = this.listContainer();
         if (!container) {
             return;
         }
-
-        const children = Array.from(container.children) as HTMLElement[];
+        const children = Array.from(container.children);
         let seenVisiblePost = false;
-
         for (const child of children) {
             const row = rowIn(child);
             if (row) {
@@ -617,17 +485,14 @@ export class HistoryGate {
                     seenVisiblePost = true;
                     break;
                 }
-
                 continue;
             }
-
             if (!seenVisiblePost && (isSeparator(child) || child.querySelector('.BasicSeparator'))) {
                 child.style.setProperty('display', 'none', 'important');
                 this.hiddenSeparators.push(child);
             }
         }
     }
-
     /**
      * The element that actually holds the rows.
      *
@@ -635,39 +500,33 @@ export class HistoryGate {
      * `#virtualizedPostListContent`, so walking up from one of them is both more
      * reliable and cheaper than guessing a container id.
      */
-    private listContainer(): HTMLElement | null {
-        const anchor = document.querySelector<HTMLElement>(POST_ROW_SELECTOR);
+    listContainer() {
+        const anchor = document.querySelector(POST_ROW_SELECTOR);
         if (anchor) {
-            const inner = anchor.closest<HTMLElement>('.innerList');
+            const inner = anchor.closest('.innerList');
             if (inner) {
                 return inner;
             }
         }
-
         for (const id of POST_LIST_IDS) {
             const el = document.getElementById(id);
             if (el) {
                 return el;
             }
         }
-
         return null;
     }
-
-    private updateNotice(visible: boolean): void {
+    updateNotice(visible) {
         const existing = document.getElementById(NOTICE_ID);
-
         if (!visible || !this.noticeEnabled) {
-            existing?.remove();
+            existing === null || existing === void 0 ? void 0 : existing.remove();
             return;
         }
-
         const host = document.getElementById('channel-header');
         if (!host) {
             return;
         }
-
-        const notice = existing ?? document.createElement('div');
+        const notice = existing !== null && existing !== void 0 ? existing : document.createElement('div');
         if (!existing) {
             notice.id = NOTICE_ID;
             notice.style.display = 'inline-flex';
@@ -683,15 +542,15 @@ export class HistoryGate {
             notice.style.opacity = '0.75';
             host.appendChild(notice);
         }
-
         const text = this.noticeText;
         if (notice.textContent !== text) {
             notice.textContent = text;
         }
         notice.title = text;
     }
-
-    private removeNotice(): void {
-        document.getElementById(NOTICE_ID)?.remove();
+    removeNotice() {
+        var _a;
+        (_a = document.getElementById(NOTICE_ID)) === null || _a === void 0 ? void 0 : _a.remove();
     }
 }
+exports.HistoryGate = HistoryGate;

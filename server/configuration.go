@@ -34,6 +34,16 @@ const (
 
 	// DefaultBulkDeleteMaxPosts caps how many posts one request may delete.
 	DefaultBulkDeleteMaxPosts = 500
+
+	// DefaultProductNavLinksPerRow is how many links a category shows per row when
+	// the administrator left the setting empty or out of range.
+	DefaultProductNavLinksPerRow = 5
+
+	// MinProductNavLinksPerRow and MaxProductNavLinksPerRow bound the row size: a
+	// single column is still a usable list, while more than a dozen leaves each
+	// tile too narrow to read.
+	MinProductNavLinksPerRow = 1
+	MaxProductNavLinksPerRow = 12
 )
 
 // fixedPresets are offered to the user in the user-settings panel as a shortcut.
@@ -115,6 +125,24 @@ type configuration struct {
 	BulkDeleteMaxPosts int
 
 	// ---------------------------------------------------------------------
+	// Product navigation (fifth feature)
+	// ---------------------------------------------------------------------
+
+	// ProductNavEnabled shows the navigation button in the global header. The button
+	// hides itself while no entry is configured, so enabling this costs nothing until
+	// something is actually added below.
+	ProductNavEnabled bool
+
+	// ProductNavIconURL is the image shown on the button. Empty means "use the built-in
+	// icon". Only http(s) and site-relative URLs are sent to the browser.
+	ProductNavIconURL string
+
+	// ProductNavLinksPerRow is how many links a category lays out on one row of the
+	// panel. Out-of-range values are replaced by the default rather than clamped,
+	// so a typo is visible instead of silently producing an odd-looking panel.
+	ProductNavLinksPerRow int
+
+	// ---------------------------------------------------------------------
 	// Channel history visibility (second feature)
 	// ---------------------------------------------------------------------
 
@@ -141,6 +169,11 @@ type configuration struct {
 	// HideInSearch also hides affected messages in search results and the
 	// right-hand side (threads, pinned, saved) panels.
 	HideInSearch bool
+
+	// HistoryPendingPolicy decides what a post row does while its channel's
+	// boundary is still being fetched: HistoryPendingBlank (default) hides the
+	// content but keeps the row's height, HistoryPendingShow renders it normally.
+	HistoryPendingPolicy string
 
 	// ExemptSystemAdmins lets system administrators see the full history.
 	ExemptSystemAdmins bool
@@ -174,6 +207,18 @@ func (c *configuration) sanitize() {
 	c.sanitizeHistory()
 	c.sanitizeGroupedTime()
 	c.sanitizeBulkDelete()
+	c.sanitizeProductNav()
+}
+
+// sanitizeProductNav drops button icons that are not an image the browser may load.
+// A rejected value is not replaced by a fallback: an administrator who pasted the
+// wrong thing should see the built-in icon, not a silently swapped URL.
+func (c *configuration) sanitizeProductNav() {
+	c.ProductNavIconURL = sanitizeNavURL(c.ProductNavIconURL)
+
+	if c.ProductNavLinksPerRow < MinProductNavLinksPerRow || c.ProductNavLinksPerRow > MaxProductNavLinksPerRow {
+		c.ProductNavLinksPerRow = DefaultProductNavLinksPerRow
+	}
 }
 
 // sanitizeBulkDelete clamps the batch size. A missing or nonsensical value falls back
@@ -219,6 +264,11 @@ func (c *configuration) sanitizeHistory() {
 	c.HistoryNoticeText = strings.TrimSpace(c.HistoryNoticeText)
 	if c.HistoryNoticeText == "" {
 		c.HistoryNoticeText = DefaultHistoryNoticeText
+	}
+
+	c.HistoryPendingPolicy = strings.ToLower(strings.TrimSpace(c.HistoryPendingPolicy))
+	if c.HistoryPendingPolicy != HistoryPendingShow {
+		c.HistoryPendingPolicy = HistoryPendingBlank
 	}
 }
 

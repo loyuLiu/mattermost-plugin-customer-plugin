@@ -38,6 +38,16 @@ export const DEFAULT_GROUPED_POSITION = 'cursor';
 /** Fallback batch size for bulk deletion, used when the server sends nothing. */
 export const DEFAULT_BULK_DELETE_MAX_POSTS = 500;
 
+/** Title of the product navigation button and of its panel. */
+export const PRODUCT_NAV_TITLE = '产品导航';
+
+/** Links shown on one row of a navigation category when the server says nothing. */
+export const DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = 5;
+
+/** Smallest and largest row size the administrator may ask for. */
+export const MIN_PRODUCT_NAV_LINKS_PER_ROW = 1;
+export const MAX_PRODUCT_NAV_LINKS_PER_ROW = 12;
+
 export function preferenceKey(name: string): string {
     return `${PREFERENCE_CATEGORY}--${name}`;
 }

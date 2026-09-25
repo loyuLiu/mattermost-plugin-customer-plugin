@@ -5,14 +5,17 @@ import {
     DEFAULT_BULK_DELETE_MAX_POSTS,
     DEFAULT_FORMAT,
     DEFAULT_GROUPED_POSITION,
+    DEFAULT_PRODUCT_NAV_LINKS_PER_ROW,
     TIME_SOURCE_CUSTOM,
     TIME_SOURCE_OFF,
     TIME_SOURCE_SYSTEM,
 } from './constants';
+import {normalizeLinksPerRow} from './product_nav';
 import type {
     BulkDeleteSettings,
     EffectiveConfig,
     GroupedTimeSettings,
+    ProductNavSettings,
     ReadStatusSettings,
     ServerConfig,
 } from './types/config';
@@ -121,4 +124,26 @@ export function resolveBulkDelete(serverConfig: ServerConfig | null): BulkDelete
     const maxPosts = Number(bulkDelete.maxPosts) > 0 ? Number(bulkDelete.maxPosts) : DEFAULT_BULK_DELETE_MAX_POSTS;
 
     return {enabled: bulkDelete.enabled === true, maxPosts};
+}
+
+/**
+ * Settings of the product navigation button.
+ *
+ * Unlike the other sections this one stays *on* when talking to an older build of the
+ * plugin server that never sends `productNav`: the engine hides the button by itself
+ * while there is no entry to show, so the default costs nothing.
+ */
+export function resolveProductNav(serverConfig: ServerConfig | null): ProductNavSettings {
+    const productNav = serverConfig?.productNav;
+    if (!productNav) {
+        return {enabled: true, iconUrl: '', linksPerRow: DEFAULT_PRODUCT_NAV_LINKS_PER_ROW};
+    }
+
+    const linksPerRow = normalizeLinksPerRow(productNav.linksPerRow);
+
+    return {
+        enabled: productNav.enabled !== false,
+        iconUrl: typeof productNav.iconUrl === 'string' ? productNav.iconUrl : '',
+        linksPerRow,
+    };
 }

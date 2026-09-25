@@ -1,11 +1,12 @@
 # Customers Plugin（Mattermost 插件）
 
-面向 **Mattermost 10.12.x** 的客户化定制插件，目前提供四个功能：
+面向 **Mattermost 10.12.x** 的客户化定制插件，目前提供五个功能：
 
 1. **接管聊天窗口的时间显示** —— 管理员在系统控制台统一配置显示格式（如 `2026-09-15 09:42`），用户也可以在自己的「设置」里按个人偏好覆盖。
 2. **新成员历史消息隔离** —— 新加入频道的成员看不到其加入之前的历史消息。
 3. **私信已读 / 未读标记** —— 私信里每条消息右上角显示「已讀」或「未讀」：别人发的看**你**有没有读过，你发的看**对方**有没有读过。
 4. **批量删除消息** —— 管理员在控制台按条件（会话 / 发送者 / 关键词 / 时间范围）批量删除，也可在会话里勾选消息删除。
+5. **产品导航** —— 全局头部右上角显示一个导航按钮（图标可自定义），点击展开分类与网站链接，每个链接可带自己的 logo。
 
 ---
 
@@ -74,6 +75,22 @@ Mattermost 会把同一个人在 5 分钟内连续发送的多条消息合并成
 | 权限 | 逐条交给 Mattermost 判定，无权限的计入 `denied` 返回，不静默跳过 |
 | 删除节奏 | 每条之间 sleep 10ms，避免一次性冲刷上千条 WebSocket 广播 |
 
+### 1.6 产品导航
+
+全局头部右上角（`@提及`、`已保存`、`设置` 那一排按钮里）多一个导航按钮，点击弹出下拉面板，按分类列出网站链接。
+
+| 能力 | 说明 |
+| --- | --- |
+| 按钮图标 | 控制台填图片 URL（`ProductNavIconUrl`），留空则用插件内置的九宫格图标 |
+| 分类 | 控制台里可视化增删、上下移动顺序 |
+| 链接 | 每个分类下可加多个链接，各自填名称、地址、logo 图片 URL（logo 留空则显示名称首字） |
+| 打开方式 | 点击链接在新标签页打开，带 `rel="noopener noreferrer"` |
+| 关闭方式 | 再点按钮、点击面板外、按 Esc、点链接后自动关闭 |
+| 空数据 | 一个条目都没配时**按钮自动隐藏**，所以开启开关本身不会改变界面 |
+| 保存前校验 | 名称或地址没填、地址不是 `https://` 开头（也不是 `/` 开头的站点相对路径）的行会**在保存前被点名拦下**，不会"保存了却消失" |
+
+> 条目存在插件的 KV 存储里，由 `GET /api/v1/navigation` 下发给所有登录用户；只有系统管理员能改（`POST` 或 `PUT /api/v1/navigation`，服务端两个都收）。
+
 ---
 
 ## 2. 目录结构
@@ -95,9 +112,11 @@ customers-plugin/
 │   ├── api.go               # 自有 REST 接口：config、history/boundary、read/peer、posts/*、channels
 │   ├── history.go           # 加入时间 KV 存储 + 历史边界计算
 │   ├── bulk_delete.go       # 批量删除：按条件遍历收集 + 逐条权限校验
+│   ├── navigation.go        # 产品导航：分类/链接 KV 存储 + 地址清洗 + REST
 │   ├── api_test.go
 │   ├── history_test.go
-│   └── bulk_delete_test.go
+│   ├── bulk_delete_test.go
+│   └── navigation_test.go
 └── webapp/                  # 前端（React + TypeScript）
     ├── package.json / tsconfig.json / webpack.config.js / babel.config.js
     └── src/
@@ -112,6 +131,8 @@ customers-plugin/
         ├── read_status.ts                   # 私信已读/未读徽标引擎
         ├── bulk_select.ts                   # 会话内勾选删除引擎 + 按钮与工具条共享的 store
         ├── bulk_delete_api.ts               # 批量删除接口封装（query / purge / delete / channels）
+        ├── product_nav.ts                   # 产品导航引擎：注入头部按钮 + 下拉面板
+        ├── product_nav_api.ts               # 产品导航接口封装（GET / PUT navigation）
         ├── resolve.ts                       # 合并「管理员默认值 + 用户偏好」
         ├── user_settings.ts                 # 读取 pp_<pluginId> 偏好
         ├── types/config.ts                  # 配置类型
@@ -125,6 +146,8 @@ customers-plugin/
             ├── read_status_controller.tsx   # 已读/未读控制器（root component）
             ├── bulk_delete_bar.tsx          # 勾选模式的浮动工具条（root component）
             ├── bulk_delete_panel.tsx        # 系统控制台的批量删除面板（custom setting）
+            ├── product_nav_controller.tsx   # 产品导航控制器（root component）
+            ├── product_nav_panel.tsx        # 系统控制台的产品导航编辑面板（custom setting）
             ├── icons.tsx                    # 内联 SVG 图标（垃圾桶）
             ├── custom_format_setting.tsx    # 用户设置里的自定义格式输入框
             └── user_timezone_setting.tsx    # 用户设置里的时区输入框
@@ -167,10 +190,13 @@ PostView → Post → PostHeader → PostTime（webapp/channels/src/components/p
 ```
 GET  <siteURL>/plugins/com.example.customers-plugin/api/v1/config
 响应 { enabled, timeFormat, timeZone, applyTo, allowUserOverride, presets[],
-       history{...}, groupedTime{...}, readStatus{enabled}, bulkDelete{enabled, maxPosts} }
+       history{...}, groupedTime{...}, readStatus{enabled}, bulkDelete{enabled, maxPosts},
+       productNav{enabled, iconUrl} }
 ```
 
-后四个是各功能自己的配置段。**旧版本服务端不会下发新字段**，所以前端的 `resolve*()` 一律把它们当作「未配置」处理：历史隔离与浮框时间沿用默认值开启，已读标记与批量删除则**保持关闭**（会往界面上加东西 / 有破坏性的功能，不默认打开）。
+后面几个是各功能自己的配置段。**旧版本服务端不会下发新字段**，所以前端的 `resolve*()` 一律把它们当作「未配置」处理：历史隔离、浮框时间与产品导航沿用默认值开启，已读标记与批量删除则**保持关闭**（会往界面上加东西 / 有破坏性的功能，不默认打开）。
+
+> 产品导航之所以敢默认开启，是因为它**没有条目就不显示按钮** —— 旧服务端不下发 `productNav` 时前端也拿不到条目，界面不会有任何变化。
 
 该路由由 Mattermost 服务器代理，只有携带有效会话（且带 `X-Requested-With: XMLHttpRequest`）的请求才会带 `Mattermost-User-ID` 请求头，否则返回 401。
 
@@ -246,7 +272,76 @@ DOM 事实（10.12 实测，`post_component.tsx`）：
 - 消息列表是**虚拟化**的（`post_list_virtualized.tsx`），DOM 里通常只有几十行，规则体积很小；
 - 隐藏是"幂等"的：规则内容没变就不写 DOM，不会和 MutationObserver 互相触发。
 
-### 3.5.5 已知边界（诚实说明）
+### 3.5.5 隐藏到底要作用在哪个元素上（最重要的一节）
+
+**结论：必须让「虚拟列表测量的那一行容器」整个塌陷，不能只藏里面的 `<div id="post_xxx">`。**
+
+Mattermost 的消息列表是虚拟化的，每个列表项都套一层 `<div class="item_measurer">`
+（`dynamic_virtualized_list/list_item.tsx`），行高是按 **`itemId → 高度`** 缓存在
+`_listMetaData.itemSizeMap` 里的。`ListItem` 挂载后测的就是这个 wrapper 的 `offsetHeight`，
+之后由 size observer 跟随变化上报。
+
+于是「把 `post_xxx` 设成 `display:none`」会发生什么：
+
+```
+.item_measurer  ← 它还在，高度由残留的 padding / wrapper 决定，远大于 0
+  └ div.post-row__padding
+      └ #post_xxx  ← 只有它被隐藏
+```
+
+虚拟列表把这份「非零但很小」的高度记进 `itemSizeMap`，每个隐藏历史行都贡献一份。等这些行滚出视口后，
+它们退化成「高度为 `itemSizeMap` 记录值」的**占位 div**——于是频道里堆着一串看不见内容却占着位置的
+空洞。**这就是「频道一片空白、要上下滚一滚才正常」**。
+
+所以现在的做法是给 **`.item_measurer`**（没有它时退化到 post 行本身）打 `data-customers-history-hidden`，
+整行 `display:none`。行容器没有 id、也没有稳定 class 可选，所以用 data 属性 + 属性选择器 —— 顺带
+**避开了 React 会在重渲染时覆盖 `className`** 这个老问题。这一修在同一处也解决了日期分隔线：
+分隔线同样要连同它所在的整行一起藏。
+
+配套的两个时序要求（缺一个都不行）：
+
+1. **必须在 `list_item.tsx` 测量之前落地。** 否则测到的是正常高度，`itemSizeMap` 被污染，
+   之后虽然会被 size observer 慢慢纠正（表现为"滚几下就好了"），但那一屏已经错了。
+   `MutationObserver` 回调跑在 microtask 里，早于 React 的 passive effects、也早于绘制，**直接在回调里同步 sync**
+   才能同时满足「测量前」和「绘制前」。一次 React commit 的所有插入本来就在同一个 MO 回调里，不会退化成一行一扫描。
+2. **边界还没取回时留白、不一刀切隐藏。** 该频道的行先 `visibility:hidden`：内容看不见，但**行高保持不变**，
+   列表既不泄露历史、也不会因为高度突变而错位。边界一到就切成 `display:none`。
+   想要旧行为可以把 `边界未取回时消息行的处理` 改成 `照常显示`。
+
+切频道时的网络往返也要消掉：启动时用 **`POST /api/v1/history/boundaries`** 把当前用户所有已知频道的
+边界一次拉全（去重、上限 200 个频道），频道集合变化时再增量补拉，切换频道基本都命中缓存。
+
+还要强调一个语义：**批量接口里缺失的频道 = 未知，不是不限制**。服务端只在确实算出来了才写进
+`cutoffs`（算失败的会整个略过），前端因此继续保持留白，不会因为一次失败就把历史放出来。
+
+### 3.5.6 系统消息为什么整条漏网（合并的用户活动行）
+
+「X 加入了频道」这类系统消息，DOM 里的行 id **不是真实帖子 id**：
+
+```
+post_user-activity-<id1>_<id2>...     ← 连续的系统消息被合并成一行
+post_user-activity-<id1>              ← 哪怕只有一条，也带这个前缀
+```
+
+出处（`mattermost-redux/lib/utils/post_list.js`）：
+
+- `makeCombineUserActivityPosts()` 把连续的用户活动帖子改写成
+  `COMBINED_USER_ACTIVITY`（= `user-activity-`）+ postId，同组后续帖子用 `_` 追加在后面；
+  关键是它**对单独一条也照改**，所以只要列表里出现过系统消息，系统消息就全都带前缀。
+- `makeGenerateCombinedPost()` 再用这些真实 id 现场合成一个帖子对象
+  （`type: system_combined_user_activity`），**合成结果不会写进 redux**。
+
+于是 `entities.posts.posts['user-activity-xxx']` 永远查不到，门拿不到 `create_at`
+就直接放过整行 —— 这就是「加入频道前的系统消息没被隐藏」。
+
+修法在 `history_gate.ts`：拿到行 id 先 `expandPostIds()` 拆回真实 id 列表，逐个查 meta：
+
+- **任一条早于边界 → 整行隐藏。** 合并行会把它们一起渲染出来，只藏一半等于没藏；
+  而且合并行自己显示的时间戳就是组里**最早**那条，与这个判定一致。
+- 全在边界之后 → 显示。
+- 一条都查不到 → 不动（不猜，与普通消息同一原则）。
+
+### 3.5.7 已知边界（诚实说明）
 
 - 这是**前端可见性控制**，不是加密。用户打开浏览器开发者工具、或直接调用 Mattermost API，仍可拿到被隐藏的帖子。如果你的场景要求"绝对取不到"，只能靠**私有频道 + 定期归档 / 到期重建频道**，插件层面做不到。
 - 插件**只记录安装之后发生的加入事件**。安装前就已在频道里的成员默认不受影响（配置 `存量成员如何处理 = 不限制`）。要让他们也生效，二选一：
@@ -254,7 +349,7 @@ DOM 事实（10.12 实测，`post_component.tsx`）：
   - 用管理接口精确回填（见下）。
 - 若某成员被移出后又重新加入，边界会按**新的加入时间**重算。
 
-### 3.5.6 管理接口：回填 / 清除某人的边界
+### 3.5.8 管理接口：回填 / 清除某人的边界
 
 ```bash
 # 设置：把 user_id 在 channel_id 的边界设为当前时间（或指定毫秒时间戳）
@@ -272,6 +367,97 @@ curl -X POST '.../api/v1/history/boundary' \
 ```
 
 `cutoffAt: 0` 表示"取当前时间"。需要调用者是**系统管理员**（`manage_system` 权限），否则返回 403。
+
+### 3.5.9 为什么"滚到最顶部"最容易出问题
+
+现象：新成员把滚动条拉到频道最顶部，加入后的那几条消息不见了，上面只剩"频道起点"和一片空白。
+**"频道起点信息"不是原因，是信号灯** —— 它只在 `atOldestPost` 为真时渲染，而我们把历史行塌成 0 之后
+`totalMeasuredSize` 永远小于视口高度，`DynamicVirtualizedList` 就会一路往回翻页翻到频道最开头，
+于是"起点信息"和"空白"总是同时出现。
+
+真正的机制（对照 release-10.12 源码）：
+
+| 环节 | 事实 |
+| --- | --- |
+| 谁在测高 | `list_item.tsx`：`ListItem` 挂载时用 `.item_measurer` 的 `offsetHeight` 测高，之后由共享 `ResizeObserver` 上报 |
+| 塌了之后谁来记 | `index.jsx` 的 `_listMetaData.itemSizeMap`（按 itemId 存）；行滚出渲染窗口后退化成 `<div style="height:缓存值">` 占位盒子，**无 class 无 id，外部 CSS 够不着** |
+| 为什么会记错 | ① `display:none` 的元素没有盒子，`ResizeObserver` 不会上报；② 上报还是 **200ms debounce**，行提前卸载会被 `cancel()`；③ 顶部翻页时的滚动补偿读的是**塌陷前**的 `scrollHeight`，补偿量偏大 |
+
+0.6.6 的处理：
+
+1. **隐藏规则从 `display:none` 改成强制 0 高**（保留一个零高度的盒子 + `visibility:hidden`）。
+   挂载测高本来就是 0；关键是盒子还在，共享 `ResizeObserver` 一定会观测到并上报 0，
+   `itemSizeMap` 也就不会再残留塌陷前的高度。
+2. **顶部锚定补偿**：只在滚动容器停在顶部（`scrollTop <= 4`）且第一条可见消息不在视口里时，
+   把它拉回视野。既不会打断正在滚动的用户，也不会反复触发（拉回来之后就满足"已可见"）。
+3. 顺带：分隔线扫描遇到第一条可见消息就停，虚拟化下 `.innerList` 动辄几百个子节点，原来每次 sync 都全扫。
+
+排查现场时，控制台粘贴 `scripts/diagnose-history-top.js`：它会告诉你可见行到底在不在 DOM 里
+（`rowsVisible`）、第一条可见行上方堆了多少像素空白（`blankAboveFirstVisiblePx`）、
+占位盒子合计占了多少（`phantomPlaceholderPx`）。
+
+### 3.5.10 为什么"第一次进去是好的，刷新或切回来就坏了"
+
+现象：强制刷新（忽略缓存）时隔离正常；普通刷新、或者切到别的频道再切回来，又变回一片空白。
+
+**这不是两个 bug，是同一个"塌陷前被测过一次"的问题换了个时机出现。** 上表的第 ③ 条漏了一个前提：
+行什么时候会被"按全高测量"？只有一种情况 —— **边界还没取回来**（`pending` 状态刻意保留了行高，
+既不想泄露历史也不想让滚动条跳）。
+
+| 时机 | 渲染 vs 边界谁先到 | 结果 |
+| --- | --- | --- |
+| 冷启动 | 静态资源慢，插件 bundle 也慢，边界请求和帖子请求几乎同时到 | 边界常常赶得上，行一插进来就是 0 高 |
+| 普通刷新 / 切回频道 | 静态资源命中缓存，帖子（或 redux 里已有的帖子）**同步就渲染完了**，边界请求落在后面 | 整屏行先按全高测一遍，再被我们塌掉；200ms debounce 还没上报，行就因为翻页/重渲染卸载了 → `cancel()` → 旧高度永久留在 `itemSizeMap` |
+
+0.6.7 的处理（三条，逐条对应上面这张表）：
+
+1. **边界在首帧之前就必须已知**：`putBoundary()` 把每个用户的边界镜像进 `localStorage`
+   （`cutoff=0` 的频道**不落盘**，否则"未知"会被固化成"不限制"），启动时 `hydrateBoundaries()`
+   同步读回来。读回来的条目一律标记为**陈旧**，所以界面先用旧值渲染、后台再重新校验（SWR），
+   管理员改了配置也能自己纠正。
+2. **取边界改成 stale-while-revalidate**：`ensureBoundary()` 先用已有值（哪怕过期）渲染，再去网络上要新的。
+   以前是"没有新鲜值就等"，等待期间全是 `pending` 行。
+3. **视口归位**：从"只在顶部拉回"推广成**只要视口里一条可见消息都没有就归位**。
+   这是个永远不会误伤的判断 —— 塌成 0 的行没有高度可滚进去，所以"视口里没有可见消息"
+   只可能是缓存高度出了问题。可见消息永远是最新的那一段（列表底部），所以直接去底部；
+   额外加了 800ms 的手势静默，正在滚的人绝不会被拽走。
+
+### 3.5.11 0.6.8 的根治：过滤发生在数据层，而不是渲染之后
+
+0.6.6 / 0.6.7 修的都是"渲染后隐藏"这条路上的坑，但这条路本身有一个赢不了的对手：
+**虚拟列表的行高是在渲染时测的**。只要还有"先渲染、再隐藏"的时序缝隙（未知边界、翻页、
+重渲染），被测过一次的行高就永远留在 `itemSizeMap` 里。
+
+0.6.8 换了打法 —— **让那些消息根本不被渲染**。`post_stream_filter.ts` 补丁全局 `fetch`
+（`@mattermost/client` 的 `doFetch` 调用的是全局 `fetch`，调用时才解析，补丁可以拦截），
+对 `GET /api/v4/channels/<id>/posts*` 的响应在进 redux 之前过滤：
+
+- `create_at < cutoffAt` 的帖子直接从 `order` / `posts` 里删掉（保留「你被加入频道」
+  的系统消息 —— 它在加入瞬间创建，是成员应该看到的加入后第一行）；
+- 删过历史且页面是降序时，把 `prev_post_id` 置空。webapp 判断 `atOldestPost` 看的就是
+  `prev_post_id === ''`（不是 `has_next`），于是列表认为自己已到最旧，**不会再往后翻页**
+  去请求注定会被丢掉的历史页；
+- 「频道起点信息」（`#channelIntro`）由 DOM 门单独收掉（它没有 post id，不走在帖子扫描里）；
+- 边界未知时，posts 请求会先等一次边界接口（3 秒超时，失败则原样透传，交给 DOM 门兜底）；
+- 插件自身的 `/plugins/...` 请求豁免，边界请求不会递归进补丁。
+
+效果：受限成员看到的就是「你被加入频道」+ 加入后的消息，顶部没有空盒子、没有起点信息，
+强制刷新、普通刷新、切频道再切回来全都一样 —— 因为 redux 里从一开始就只有他能看的消息。
+DOM 门（3.5.7–3.5.10 的全部机制）保留为兜底，正常情况下不再触发。
+
+### 3.5.12 0.6.9 清理：兜底只留它真正需要的东西
+
+数据层过滤上线并验收后，DOM 门里有一批代码只服务于"和测高竞速"那个时代，0.6.9 删掉：
+
+| 删掉的 | 它当年解决什么 | 为什么现在多余 |
+| --- | --- | --- |
+| `topScrollDelta()` + `TOP_EPSILON` / `TOP_PADDING` / `EDGE` | 停在顶部时把第一条可见消息**最小位移**拉回视野 | 位移量的精细调节是为了不打断阅读；而"视口里没有可见消息"这个状态本身就是缓存坏了，最小位移和跳到底部对用户没有区别 |
+| `planViewportRecovery` 的 `delta` 模式（三选一） | 顶部最小位移 / 中间按方向拉 / 没有可见消息跳底部 | 只剩"有重叠就不动，否则去底部"一条规则：可见消息永远在列表末尾，方向是确定的 |
+| `schedule()` 间接层 | 早年是 debounce，后来退化成 `sync()` 的空壳 | 直接在 MutationObserver 回调里 `sync()`，时序说明挪到注册处 |
+
+保留的：MO 回调里同步 sync、整行（`.item_measurer`）塌陷为 0 高、`pending` 留白、
+`channelIntro` 收掉、`forceVisible` 豁免、800ms 手势静默。前四项是过滤失效（边界取不回来）
+时唯一的兜底，最后一项防止兜底本身和正在滚动的人打架。
 
 ---
 
@@ -348,6 +534,80 @@ HasPermissionToChannel(actorID, channelID, PermissionDeleteOthersPosts)     // �
 
 ---
 
+## 3.8 产品导航是怎么做的（第五个功能）
+
+### 3.8.1 为什么不用 `registerAppBarComponent`
+
+插件 API 里有 `registerAppBarComponent(iconUrl, action, tooltip, supportedProductIds)`，看起来正合适，但它属于 **App Bar**，需要传 `ProductScope`（`boards` / `playbooks` 等），且在 Channels 里默认不开 —— 用它等于把入口交给另一套产品开关。用户要的是「全局头部右上角」，所以直接往头部容器里注入按钮。
+
+DOM 事实（10.12 实测）：`global_header.tsx` 渲染 `<GlobalHeaderContainer id='global-header'>`，其中 `right_controls/right_controls.tsx` 渲染 `id={'RightControlsContainer'}`，里面是 `@提及`、`已保存`、`设置` 等按钮。导航按钮 `insertBefore(container.firstChild)`，落在这排按钮的最前面，仍在右上角。
+
+### 3.8.2 数据为什么存在 KV 而不是插件配置
+
+- 条目数量不定、可增删排序，塞进 `settings_schema` 的一个 text 框里既难用也难校验；
+- 写操作要限管理员、读操作要给所有人 —— 自有 REST 端点最自然。
+
+```
+GET  /api/v1/navigation          # 所有登录用户：读条目（不受功能开关影响，管理员关闭时也要能编辑）
+PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整体替换
+请求/响应 { "categories": [ { "id", "name", "links": [ { "id", "name", "url", "iconUrl" } ] } ] }
+```
+
+### 3.8.3 两个地方都做 URL 清洗
+
+链接地址会进每个用户页面的 `href` 和 `src`，所以服务端存之前、前端渲染之前**各洗一次**：
+
+- 只接受 `http(s)://` 与站点相对路径（`/admin_console/...`）；
+- `//host`（协议相对，会跳出站点）与 `/\host` 一律拒绝；
+- 含空白或控制字符的一律拒绝 —— 这是 `java\nscript:alert(1)` 绕过前缀检查的常用手法；
+- 服务端另有限制：30 个分类 / 每类 50 条链接 / 名称 64 字 / 文档 32 KB。
+
+前端渲染时再做一次同样的判断，所以即便有人手工改了 KV，也插不进 `javascript:` 链接。
+
+### 3.8.4 面板与关闭行为
+
+面板是纯 DOM（不是 React 组件）—— 头部由 React 管，没法往里挂组件，纯 DOM 也更好测。关闭时机：再点按钮、点击面板外（`click` 捕获阶段判断 target 是否在按钮/面板内）、按 Esc、点链接后。空条目时按钮主动移除自己，MutationObserver + 3 秒全量重扫保证 React 重建头部后按钮能复活。
+
+### 3.8.5 每行的链接数可在插件设置里改
+
+设置项 **`ProductNavLinksPerRow`**（数字，1–12，默认 5）：每个分类一行显示多少个链接，
+超出的换到下一行。面板宽度跟着这个数字自动调整，改完保存、用户刷新页面即生效。
+
+链接容器用 **CSS grid**（`repeat(N, minmax(0,1fr))`），不是 `flex-wrap`：
+
+- `flex-wrap` 的行数取决于每个瓦片的**固有宽度**，名称长短一变，每行个数就飘 —— 之前瓦片写死
+  `width:88px`、面板 `300px`，扣掉内边距只剩 272px，装得下 2 个（88×2+6）装不下 3 个（88×3+12=276），
+  所以看起来"只能排 2 个"；
+- 改成 grid 后每行固定 N 个，瓦片 `width:100%` 由列宽决定，名称长短不再影响排布。
+
+面板宽度由列数反推，保证 N 个瓦片一定放得下：
+`宽度 = 2×14（内边距） + N×56（最小瓦片） + (N-1)×6（间距）`，5 列即 332px。
+
+**越界值回默认而不是夹到边界**：填 0、负数、大于 12 或非数字，一律按 5 处理 —— 夹到 12 会让
+「填错了」看不出来（还以为是自己想要的）。服务端 `sanitizeProductNav()` 与前端
+`normalizeLinksPerRow()` 各做一次，两边规则一致。
+
+运行时改这个值不重启引擎：`ProductNavEngine.setLinksPerRow()` 就地重写样式表，打开着的面板
+会按新宽度重建，链接不会丢。
+
+瓦片变窄后名称一行放不下，所以名称限高**两行**（`-webkit-line-clamp:2` + `max-height` 兜底），
+完整名称仍在 `title` 里。
+
+### 3.8.6 服务端下发的一定是数组，不是 `null`
+
+踩过的坑：Go 的 **nil slice 会被 `encoding/json` 写成 `null`**。某个分类里的链接全部被清洗规则丢弃时，`Links` 就是 nil，响应变成 `{"categories":[{"id":"c","name":"内部","links":null}]}`，前端 `category.links.map(...)` 当场抛
+`TypeError: Cannot read properties of null (reading 'map')`，而且发生在 `Promise.finally` 里，表现为「保存好像也没报错，但页面卡住了」。
+
+所以现在是三道保险：
+
+1. 服务端 `normalizeNavigation()` 预分配 `Categories: []NavCategory{}` 与每个分类的 `Links: []NavLink{}`，空文档写出来是 `{"categories":[]}`；
+2. 前端 `normalizeNavDocument()` 把 `categories` / `links` 为 `null`、缺失、甚至数组里混了 `null` 元素的情况都收拾干净再往下走；
+3. 所有遍历统一写成 `(category.links || [])`。
+
+**新增任何遍历导航数据的代码，都要走 `normalizeNavDocument()` 或 `|| []`**，别直接 `.map`。
+
+---
+
 ## 4. 构建与安装
 
 ### 4.1 环境要求
@@ -363,7 +623,7 @@ cd customers-plugin
 make dist
 ```
 
-产物：`dist/com.example.customers-plugin-<version>.tar.gz`（当前版本见 `plugin.json` 的 `version`，如 `0.5.1`）
+产物：`dist/com.example.customers-plugin-<version>.tar.gz`（当前版本见 `plugin.json` 的 `version`）
 
 > **Windows 没有 make**：先装一个（`choco install make`，或 `scoop install make`）；装不了就直接跑等价脚本：
 > ```bash
@@ -414,7 +674,7 @@ cd webapp && npm run build:watch
 
 ```bash
 # 服务端（Go）
-cd server && GOOS=windows GOARCH=amd64 go test ./...
+GOOS=windows GOARCH=amd64 go test ./server/...
 
 # 前端引擎（jsdom，需要 webapp 已 npm install）
 NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
@@ -423,18 +683,24 @@ NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
   node scripts/test-read-status.js      # 私信已读/未读徽标：40 项
 NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
   node scripts/test-bulk-select.js      # 会话内勾选删除：31 项
+NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test-history-gate.js     # 历史隔离：整行塌陷 / 留白 / 同步时机 / 系统消息：53 项
+NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
+  node scripts/test-product-nav.js      # 产品导航按钮与面板：82 项
 
 # 类型与风格
-cd webapp && npx tsc --noEmit && npx eslint --ext .ts --ext .tsx src --quiet
+cd webapp && npm run check-types && npm run lint
 ```
 
-三个脚本都是同一套路：先把对应 `.ts` 编译到临时目录，再在 jsdom 里搭一个和 10.12 同构的消息 DOM。
+四个脚本都是同一套路：先把对应 `.ts` 编译到临时目录，再在 jsdom 里搭一个和 10.12 同构的 DOM。
 
 | 脚本 | 覆盖 |
 | --- | --- |
 | `test-grouped-time.js` | 识别合并块、跟随鼠标与贴边收口、注入隐藏内联时间的样式、块首条 / 右侧栏不显示、取不到时间不显示、关闭后彻底清理 |
 | `test-read-status.js` | **收到的消息按我的位置判定 / 发出的消息按对方的位置判定**、推进任一侧的已读位置只影响对应一侧、未知位置时不打标且只请求一次、黄绿主题色、双向切换、停止后清理 |
 | `test-bulk-select.js` | 复选框注入与幂等、勾选/取消、全选/清空、虚拟列表新行自动补框、重扫不丢选中状态、停止后清理、按钮与工具条共享的 store |
+| `test-history-gate.js` | 隐藏标记打在被测量的 `.item_measurer` 整行上（不是内部 post div）、边界未取回时留白且顺手补拉、边界到达后从留白切到隐藏、`pendingPolicy=show`、MO 回调里同步处理（不等下一帧）、日期分隔线只藏"其上全隐藏"的、提示条、`hideInSearch=false` 只管中心频道、**系统消息（`user-activity-` 合并行）拆回真实 id 后判定**、停止后彻底清理 |
+| `test-product-nav.js` | 无条目时不显示按钮、按钮插在 `#RightControlsContainer` 最前面且幂等、自定义图标与非法图标回退、面板按分类渲染、`javascript:` 链接被过滤、`target=_blank` + `noopener`、logo 缺失时显示名称首字、Esc / 点击外部 / 点击链接关闭、打开时更新数据重建面板、头部重建后复活、停止后彻底清理、**保存前校验（空白行放过 / 缺名称缺地址 / 缺 `https://` 拦截）** |
 
 ---
 
@@ -458,11 +724,16 @@ cd webapp && npx tsc --noEmit && npx eslint --ext .ts --ext .tsx src --quiet
 | `BulkDeleteEnabled` | bool | `false` | 批量删除总开关。**默认关闭**，删除不可恢复，请确认后再开 |
 | `BulkDeleteMaxPosts` | number | `500` | 单次请求最多删除多少条（硬上限 10000） |
 | `BulkDeletePanel` | custom | — | 控制台里的批量删除面板，由前端组件渲染（不是普通设置项） |
+| `ProductNavEnabled` | bool | `true` | 产品导航总开关。没有条目时按钮自动隐藏，所以默认开启也不会改变界面 |
+| `ProductNavIconUrl` | text | 空 | 导航按钮的图标图片 URL（也可填站点相对路径）；留空用内置九宫格图标。只接受 http(s) 与站点相对路径 |
+| `ProductNavLinksPerRow` | number | 5 | 每个分类一行显示几个链接（1–12）。留空/0/越界一律按 5 处理；面板宽度随之自动调整 |
+| `ProductNavPanel` | custom | — | 控制台里的产品导航编辑面板：分类与链接的可视化增删排序 |
 | `HistoryLockEnabled` | bool | `true` | 历史隔离总开关 |
 | `HistoryMode` | dropdown | `since_join` | `since_join` 只看该成员加入之后；`recent_days` 所有人只看最近 N 天；`off` 不限制 |
 | `HistoryDays` | text | `7` | 仅 `recent_days` 生效，正整数 |
 | `LegacyMemberMode` | dropdown | `show_all` | 无加入记录的成员：`show_all` 不限制；`since_activation` 以插件启用时间为界 |
 | `HideInSearch` | bool | `true` | 是否连搜索结果、右侧栏（线程/置顶/已保存）一起隐藏 |
+| `HistoryPendingPolicy` | dropdown | `blank` | 边界还在取回时：`blank` 内容留白但保留行高（不泄露、滚动条不跳，推荐）；`show` 先照常显示（可能一瞬可见历史） |
 | `HistoryNoticeEnabled` | bool | `true` | 是否在频道头部显示隐藏提示 |
 | `HistoryNoticeText` | text | 见控制台 | 提示文案 |
 | `ExemptSystemAdmins` | bool | `false` | 系统管理员是否豁免（便于排障） |
@@ -514,7 +785,7 @@ MM-DD HH:mm               → 09-15 09:42
 2. `plugin.json` 的 `settings_schema.settings` 增加对应项；
 3. 若前端需要，扩展 `server/api.go` 的 `publicConfig`；
 4. webapp 侧在 `webapp/src/index.tsx` 里再注册一个组件，例如：
-   - `registry.registerRootComponent(...)`：挂一个不可见组件，用 MutationObserver 改 DOM（本插件三个功能都这么干）
+   - `registry.registerRootComponent(...)`：挂一个不可见组件，用 MutationObserver 改 DOM（时间、历史隔离、已读标记、产品导航四个功能都这么干）
    - `registry.registerChannelHeaderButtonAction(...)`：频道头部加按钮（回调**无参数**，跨组件通信要用模块级 store）
    - `registry.registerAdminConsoleCustomSetting(key, Component)`：控制台设置项换成自定义 React 组件
    - `registry.registerPostDropdownMenuAction(...)`：消息右键菜单加项
@@ -537,7 +808,15 @@ MM-DD HH:mm               → 09-15 09:42
 | `unable to start plugin: ... unable to generate plugin checksum: open plugins/<id>/server/dist/plugin-linux-amd64: no such file or directory` | 包内二进制路径与 `plugin.json` 的 `server.executables` 声明不一致。必须是 `server/dist/plugin-<os>-<arch>`（注意 `dist` 这一层）。用 `tar -tzf dist/*.tar.gz` 核对；用本仓库的 `scripts/build.sh` 打包不会出现此问题，它结尾会自检 |
 | 启动时 `permission denied`（或 `fork/exec ... permission denied`） | 包内二进制缺少可执行位。Windows 上 `chmod 0755` 对 tar 无效，请改用 `scripts/build.sh`（内部走 `scripts/pack.py` 显式写权限位）或在 Linux/macOS 上 `make dist` |
 | `plugin.json` 找不到 / 包结构异常 | tar 的顶层目录必须且只能是插件 ID（如 `com.example.customers-plugin/`），不能多套一层 |
-| 历史消息没被隐藏 | ① `HistoryLockEnabled` 是否为 true、`HistoryMode` 是否不是 `off`；② 该成员是否有加入记录（**插件安装前就加入的成员默认不受限**，见 3.5.5）；③ 浏览器控制台看 `/api/v1/history/boundary?channel_id=…` 是否返回 `cutoffAt > 0`；④ 刚加入频道时刷新一次页面 |
+| 历史消息没被隐藏 | ① `HistoryLockEnabled` 是否为 true、`HistoryMode` 是否不是 `off`；② 该成员是否有加入记录（**插件安装前就加入的成员默认不受限**，见 3.5.7）；③ 浏览器控制台看 `/api/v1/history/boundary?channel_id=…` 是否返回 `cutoffAt > 0`；④ 刚加入频道时刷新一次页面 |
+| 加入频道前的**系统消息**（X 加入了频道 / X 离开了频道）没被隐藏 | 0.6.4 及更早没有处理 `user-activity-` 合并行（行 id 不是真实帖子 id，redux 里查不到）。升级即可；原理见 3.5.6 |
+| 切换频道时有一瞬间能看到加入前的消息 | 0.6.4 之前的实现只藏了 `<div id="post_xxx">`，虚拟列表仍按外层 wrapper 的高度给它留位置。升级即可。若升级后仍有：① 控制台看 `POST /api/v1/history/boundaries` 是否在启动时成功返回（失败时切频道就只能靠留白兜底）；② 检查 `边界未取回时消息行的处理` 是否被改成了 `照常显示` |
+| 切换频道时聊天区一片空白，要滚一下才正常 | 同上（`itemSizeMap` 里存了被隐藏行的残留高度）。升级到 0.6.4：**隐藏必须作用在 `.item_measurer` 整行上** |
+| 上下滚动时消息不显示、来回滚动才出来 | 同上：行滚出视口后变成「按缓存高度撑开的占位 div」，那一刻 DOM 里根本没有 `#post_xxx` 可供隐藏，只能靠整行塌陷 + size observer 纠正 |
+| 产品导航一个分类里一行只排得下 2 个链接 | 见 3.8.5。原来是 `flex-wrap` + 写死 88px 瓦片，300px 面板只放得下 2 个。0.6.9 起改成 grid，0.6.10 起每行个数由设置项 `ProductNavLinksPerRow`（1–12，默认 5）控制 |
+| 滚到频道最顶部时加入后的消息不见了 | 见 3.5.9。0.6.6 起：① 隐藏规则从 `display:none` 改成强制 0 高（保留盒子，共享 ResizeObserver 才会上报塌陷后的 0）；② 停在顶部且第一条可见消息不在视口里时自动把它拉回视野。0.6.7 起：③ 只要视口里没有可见消息就归位（带 800ms 手势静默）。0.6.8 起数据层过滤（见 3.5.11），历史消息根本不会被渲染 |
+| 强制刷新正常、普通刷新或切回频道就失效 | 见 3.5.10。0.6.7 起边界会镜像到 `localStorage` 并在首帧前读回 + 后台重新校验；0.6.8 起数据层过滤彻底消除时序竞态（见 3.5.11） |
+| 消息行是空白的、不显示内容 | 该频道的边界还没取回来，正在留白。通常是 `POST /api/v1/history/boundaries` 失败（见上面的 404/401）或服务端算边界报错，看服务端日志 |
 | `cutoffAt` 一直是 0 | 说明服务端没有该 (用户, 频道) 的加入记录。把成员移出再重新加入，或用管理接口回填 |
 | 隐藏了但提示条没出现 | 提示条挂在 `#channel-header` 上；确认 `HistoryNoticeEnabled` 为 true 且确实有消息被隐藏（提示条只在隐藏生效时出现） |
 | 日期分隔线还在 | 分隔线只在「其上所有消息都被隐藏」时才隐藏；如果只是部分隐藏则保留，属正常行为 |
@@ -550,6 +829,17 @@ MM-DD HH:mm               → 09-15 09:42
 | 频道头没有批量删除按钮 | 按钮只在 `BulkDeleteEnabled` 为 **true** 时注册（否则点了也会被 403）。改完设置要保存并 Ctrl+F5 |
 | 批量删除接口返回 403 | ① `BulkDeleteEnabled` 是否开启；② 删除别人的消息需要 `delete_others_posts`（系统管理员或有该权限的频道管理员）；③ 响应里的 `denied` 会告诉你有多少条因为无权限被跳过 |
 | 预览条数是 0 | 检查 `channelId` 是否选对、时间范围是否用本地时间（面板里填的是本地时间，会转成毫秒时间戳）、关键词大小写不敏感但必须是消息正文的子串 |
+| 右上角没有产品导航按钮 | ① `ProductNavEnabled` 是否为 true；② **必须至少配置一条链接**（没有条目时按钮会主动隐藏）；③ 改完设置要保存并 Ctrl+F5；④ 看控制台 `/api/v1/navigation` 是否返回了非空的 `categories` |
+| 导航保存后用户端没变化 | 用户端要刷新页面才会重新拉 `/api/v1/navigation`；按钮与面板是插件启动后注入的，上传新版本后同样要 Ctrl+F5 |
+| 某条链接保存后消失了 | 服务端只保留能渲染的条目：地址为空、地址不是 http(s)/站点相对路径、或名称为空的链接会被丢弃。检查地址是否写成了 `example.com`（缺 `https://`） |
+| 链接的 logo 不显示 | logo 用的是外部图片地址，用户浏览器必须能访问到它；加载失败会自动回退成名称首字的色块 |
+| 导航面板保存报 400 | 文档超过 32 KB（30 个分类 × 每类 50 条链接的上限之内不该发生），或请求体不是合法 JSON。面板会把服务端返回的原文一并显示出来 |
+| 导航面板保存报 401 | 登录会话失效，刷新页面重新登录再保存 |
+| 导航面板保存报 403 | 当前账号没有 `manage_system` 权限。只有系统管理员能改产品导航；读（`GET`）所有人都可以 |
+| 导航面板保存报 404 | 服务端没有 `/api/v1/navigation`。通常是插件没升级到 0.6.x，或升级后没有重新启用 —— 系统控制台 → 插件 → 找到本插件 → **禁用再启用** |
+| 导航面板保存报 405 | 请求方法被拦。服务端同时接受 `POST` 与 `PUT`，若仍报 405 说明是站点前面的**反向代理只允许 GET/POST**，检查代理配置 |
+| 导航面板加载失败、保存按钮置灰 | `GET /api/v1/navigation` 没成功，此时保存一定会失败，所以直接禁用。点「重新加载」重试；若仍失败按上面的 404 处理 |
+| 保存后控制台报 `Cannot read properties of null (reading 'map')` | 旧版本（0.6.0/0.6.1）的服务端会把「链接被全部丢弃的分类」写成 `"links": null`。升到 **0.6.2** 即可；原理见 3.8.5 |
 
 查看服务端日志：`make logs` 或 `make logs-watch`。
 

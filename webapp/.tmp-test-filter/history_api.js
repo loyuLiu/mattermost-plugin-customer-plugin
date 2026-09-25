@@ -1,11 +1,10 @@
+"use strict";
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
-
-import type {HistoryBoundaries, HistoryBoundary} from './types/history';
-
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadBoundary = exports.loadBoundaries = exports.persistBoundaries = exports.hydrateBoundaries = exports.clearBoundaryCache = exports.isBoundaryStale = exports.peekBoundary = exports.putBoundary = void 0;
 /** How long a boundary stays cached before it is refreshed. */
 const CACHE_TTL_MS = 60 * 1000;
-
 /**
  * Boundaries are mirrored into `localStorage` so that a reload — or coming back
  * to a channel — starts with an answer instead of a round trip.
@@ -18,81 +17,71 @@ const CACHE_TTL_MS = 60 * 1000;
  * class of problem for every load after the first.
  */
 const STORAGE_PREFIX = 'customers-plugin:history-boundaries:';
-
 /** Persisted entries older than this are dropped rather than trusted. */
 const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
 /** Coalesces the writes of a bulk fetch into one serialisation. */
-let persistTimer: number | null = null;
-
-const cache = new Map<string, {boundary: HistoryBoundary; fetchedAt: number}>();
-const inflight = new Map<string, Promise<HistoryBoundary>>();
-
-function cacheKey(userId: string, channelId: string): string {
+let persistTimer = null;
+const cache = new Map();
+const inflight = new Map();
+function cacheKey(userId, channelId) {
     return `${userId}::${channelId}`;
 }
-
-function storageKey(userId: string): string {
+function storageKey(userId) {
     return STORAGE_PREFIX + userId;
 }
-
 /** localStorage can be missing (private mode) or throw (quota); never fatal. */
-function readStore(key: string): string | null {
+function readStore(key) {
     try {
         if (typeof localStorage === 'undefined') {
             return null;
         }
-
         return localStorage.getItem(key);
-    } catch {
+    }
+    catch {
         return null;
     }
 }
-
-function writeStore(key: string, value: string): void {
+function writeStore(key, value) {
     try {
         if (typeof localStorage === 'undefined') {
             return;
         }
-
         localStorage.setItem(key, value);
-    } catch {
+    }
+    catch {
         // Full or forbidden: the in-memory cache still works for this session.
     }
 }
-
 /** Marks a boundary as fetched for the given user and channel. */
-export function putBoundary(userId: string, channelId: string, boundary: HistoryBoundary): void {
-    cache.set(cacheKey(userId, channelId), {boundary, fetchedAt: Date.now()});
+function putBoundary(userId, channelId, boundary) {
+    cache.set(cacheKey(userId, channelId), { boundary, fetchedAt: Date.now() });
     persistBoundaries(userId);
 }
-
+exports.putBoundary = putBoundary;
 /** Returns the cached cutoff, or undefined when it has not been fetched yet. */
-export function peekBoundary(userId: string, channelId: string): HistoryBoundary | undefined {
+function peekBoundary(userId, channelId) {
     const entry = cache.get(cacheKey(userId, channelId));
     if (!entry) {
         return undefined;
     }
-
     return entry.boundary;
 }
-
+exports.peekBoundary = peekBoundary;
 /** True when the cached entry is older than the TTL. */
-export function isBoundaryStale(userId: string, channelId: string): boolean {
+function isBoundaryStale(userId, channelId) {
     const entry = cache.get(cacheKey(userId, channelId));
     if (!entry) {
         return true;
     }
-
     return Date.now() - entry.fetchedAt > CACHE_TTL_MS;
 }
-
+exports.isBoundaryStale = isBoundaryStale;
 /** Clears every cached boundary, e.g. after a configuration change. */
-export function clearBoundaryCache(): void {
+function clearBoundaryCache() {
     cache.clear();
     inflight.clear();
 }
-
+exports.clearBoundaryCache = clearBoundaryCache;
 /**
  * Reads the boundaries of one user back from `localStorage`.
  *
@@ -104,40 +93,34 @@ export function clearBoundaryCache(): void {
  * `PERSIST_MAX_AGE_MS` are dropped — a boundary that old describes a membership
  * that may no longer exist.
  */
-export function hydrateBoundaries(userId: string): Record<string, number> {
-    const cutoffs: Record<string, number> = {};
+function hydrateBoundaries(userId) {
+    const cutoffs = {};
     if (!userId) {
         return cutoffs;
     }
-
     const raw = readStore(storageKey(userId));
     if (!raw) {
         return cutoffs;
     }
-
-    let payload: {at?: number; cutoffs?: Record<string, number>};
+    let payload;
     try {
-        payload = JSON.parse(raw) as {at?: number; cutoffs?: Record<string, number>};
-    } catch {
+        payload = JSON.parse(raw);
+    }
+    catch {
         return cutoffs;
     }
-
     if (!payload.cutoffs) {
         return cutoffs;
     }
-
     const at = typeof payload.at === 'number' ? payload.at : 0;
     if (at <= 0 || Date.now() - at > PERSIST_MAX_AGE_MS) {
         return cutoffs;
     }
-
     for (const [channelId, cutoffAt] of Object.entries(payload.cutoffs)) {
         if (!channelId || typeof cutoffAt !== 'number' || cutoffAt <= 0) {
             continue;
         }
-
         cutoffs[channelId] = cutoffAt;
-
         // fetchedAt 0 -> always stale -> the caller revalidates in the background.
         cache.set(cacheKey(userId, channelId), {
             boundary: {
@@ -151,55 +134,46 @@ export function hydrateBoundaries(userId: string): Record<string, number> {
             fetchedAt: 0,
         });
     }
-
     return cutoffs;
 }
-
+exports.hydrateBoundaries = hydrateBoundaries;
 /** Mirrors the in-memory cache of one user into `localStorage`. */
-export function persistBoundaries(userId: string): void {
+function persistBoundaries(userId) {
     if (!userId) {
         return;
     }
-
     if (persistTimer !== null && typeof clearTimeout === 'function') {
         clearTimeout(persistTimer);
     }
-
     if (typeof setTimeout !== 'function') {
         flushBoundaries(userId);
         return;
     }
-
     persistTimer = setTimeout(() => {
         persistTimer = null;
         flushBoundaries(userId);
-    }, 300) as unknown as number;
+    }, 300);
 }
-
-function flushBoundaries(userId: string): void {
-    const cutoffs: Record<string, number> = {};
+exports.persistBoundaries = persistBoundaries;
+function flushBoundaries(userId) {
+    const cutoffs = {};
     let at = 0;
-
     const prefix = `${userId}::`;
     cache.forEach((entry, key) => {
         if (!key.startsWith(prefix)) {
             return;
         }
-
         const channelId = key.slice(prefix.length);
         if (!channelId || entry.boundary.cutoffAt <= 0) {
             return;
         }
-
         cutoffs[channelId] = entry.boundary.cutoffAt;
         if (entry.fetchedAt > at) {
             at = entry.fetchedAt;
         }
     });
-
-    writeStore(storageKey(userId), JSON.stringify({at: at || Date.now(), cutoffs}));
+    writeStore(storageKey(userId), JSON.stringify({ at: at || Date.now(), cutoffs }));
 }
-
 /**
  * Loads the boundaries of several channels in one round trip and writes each of
  * them into the cache.
@@ -211,32 +185,24 @@ function flushBoundaries(userId: string): void {
  * Channels that the server omits from the response stay unknown on purpose — they
  * must remain gated rather than being treated as unrestricted.
  */
-export async function loadBoundaries(
-    url: string,
-    userId: string,
-    channelIds: string[],
-): Promise<Record<string, number>> {
-    const wanted: string[] = [];
+async function loadBoundaries(url, userId, channelIds) {
+    var _a, _b, _c;
+    const wanted = [];
     for (const channelId of channelIds) {
         if (!channelId) {
             continue;
         }
-
         if (wanted.includes(channelId)) {
             continue;
         }
-
         if (hasFreshBoundary(userId, channelId)) {
             continue;
         }
-
         wanted.push(channelId);
     }
-
     if (wanted.length === 0) {
         return {};
     }
-
     const response = await fetch(`${url}/api/v1/history/boundaries`, {
         method: 'POST',
         credentials: 'include',
@@ -244,51 +210,40 @@ export async function loadBoundaries(
             'X-Requested-With': 'XMLHttpRequest',
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({channelIds: wanted}),
+        body: JSON.stringify({ channelIds: wanted }),
     });
-
     if (!response.ok) {
         throw new Error(`failed to load history boundaries: ${response.status}`);
     }
-
-    const payload = await response.json() as HistoryBoundaries;
-    const cutoffs = payload.cutoffs ?? {};
-
+    const payload = await response.json();
+    const cutoffs = (_a = payload.cutoffs) !== null && _a !== void 0 ? _a : {};
     for (const [channelId, cutoffAt] of Object.entries(cutoffs)) {
         putBoundary(userId, channelId, {
             enabled: cutoffAt > 0,
             channelId,
-            mode: payload.mode ?? '',
+            mode: (_b = payload.mode) !== null && _b !== void 0 ? _b : '',
             joinedAt: 0,
             cutoffAt,
-            serverTime: payload.serverTime ?? Date.now(),
+            serverTime: (_c = payload.serverTime) !== null && _c !== void 0 ? _c : Date.now(),
         });
     }
-
     return cutoffs;
 }
-
+exports.loadBoundaries = loadBoundaries;
 /** True when a fresh (non-stale) boundary is already cached. */
-function hasFreshBoundary(userId: string, channelId: string): boolean {
+function hasFreshBoundary(userId, channelId) {
     return peekBoundary(userId, channelId) !== undefined && !isBoundaryStale(userId, channelId);
 }
-
 /**
  * Loads the boundary for a channel. Concurrent callers for the same
  * (user, channel) share a single request.
  */
-export async function loadBoundary(
-    url: string,
-    userId: string,
-    channelId: string,
-): Promise<HistoryBoundary> {
+async function loadBoundary(url, userId, channelId) {
     const key = cacheKey(userId, channelId);
-
     const pending = inflight.get(key);
     if (pending) {
         return pending;
     }
-
     const request = (async () => {
         const response = await fetch(`${url}/api/v1/history/boundary?channel_id=${encodeURIComponent(channelId)}`, {
             method: 'GET',
@@ -297,22 +252,19 @@ export async function loadBoundary(
                 'X-Requested-With': 'XMLHttpRequest',
             },
         });
-
         if (!response.ok) {
             throw new Error(`failed to load history boundary: ${response.status}`);
         }
-
-        const boundary = await response.json() as HistoryBoundary;
+        const boundary = await response.json();
         putBoundary(userId, channelId, boundary);
-
         return boundary;
     })();
-
     inflight.set(key, request);
-
     try {
         return await request;
-    } finally {
+    }
+    finally {
         inflight.delete(key);
     }
 }
+exports.loadBoundary = loadBoundary;

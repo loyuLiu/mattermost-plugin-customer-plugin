@@ -13,6 +13,8 @@ import BulkDeletePanel from './components/bulk_delete_panel';
 import CustomFormatSetting from './components/custom_format_setting';
 import TrashIcon from './components/icons';
 import HistoryGateController from './components/history_gate_controller';
+import ProductNavController from './components/product_nav_controller';
+import ProductNavPanel from './components/product_nav_panel';
 import ReadStatusController from './components/read_status_controller';
 import TimeFormatController from './components/time_format_controller';
 import UserTimeZoneSetting from './components/user_timezone_setting';
@@ -25,7 +27,8 @@ import {
     TIME_SOURCE_OFF,
     TIME_SOURCE_SYSTEM,
 } from './constants';
-import {fetchServerConfig, primeServerConfig} from './hooks';
+import {fetchServerConfig, getCachedServerConfig, primeServerConfig} from './hooks';
+import {installPostStreamFilter} from './post_stream_filter';
 import {resolveBulkDelete} from './resolve';
 import type {PluginRegistry} from './types/mattermost-webapp';
 
@@ -77,6 +80,19 @@ const userSettings = {
 
 export default class Plugin {
     public async initialize(registry: PluginRegistry, store: Store<GlobalState>) {
+        // Must be the very first thing: the post-stream filter has to be in
+        // place before this page load's first channel-posts request, or history
+        // reaches the redux store and the DOM gate is back to racing the
+        // virtualised list's height measurements.
+        installPostStreamFilter({
+            isEnabled: () => {
+                const cached = getCachedServerConfig();
+                return Boolean(cached?.history?.enabled && cached.history.mode !== 'off');
+            },
+            getPluginUrl: () => getPluginUrl(store.getState()),
+            getUserId: () => store.getState().entities.users.currentUserId ?? '',
+        });
+
         let config = null;
         try {
             config = await fetchServerConfig(getPluginUrl(store.getState()));
@@ -97,6 +113,10 @@ export default class Plugin {
         // Fourth feature: bulk delete, from the admin console and from a conversation.
         registry.registerRootComponent(BulkDeleteBar);
         registry.registerAdminConsoleCustomSetting('BulkDeletePanel', BulkDeletePanel, {showTitle: true});
+
+        // Fifth feature: a directory of internal systems in the global header.
+        registry.registerRootComponent(ProductNavController);
+        registry.registerAdminConsoleCustomSetting('ProductNavPanel', ProductNavPanel, {showTitle: true});
 
         // The header button is only offered when the feature is switched on; otherwise
         // clicking it would open a mode whose every request is rejected.

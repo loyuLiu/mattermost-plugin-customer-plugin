@@ -13,6 +13,15 @@ import (
 // hold two members and group messages at most eight, so one page is always enough.
 const maxPeerMembers = 100
 
+const (
+	// maxBoundaryRequestBytes caps the batch boundary request body. 26-character
+	// Mattermost ids plus separators stay far below this for any realistic sidebar.
+	maxBoundaryRequestBytes = 32 * 1024
+
+	// maxBoundaryChannels caps how many channels one batch may ask for.
+	maxBoundaryChannels = 200
+)
+
 // publicConfig is what the webapp needs in order to render timestamps and to gate
 // channel history. Only data that is safe to expose to every logged-in user belongs here.
 type publicConfig struct {
@@ -26,6 +35,16 @@ type publicConfig struct {
 	GroupedTime       groupedTimeConfig `json:"groupedTime"`
 	ReadStatus        readStatusConfig  `json:"readStatus"`
 	BulkDelete        bulkDeleteConfig  `json:"bulkDelete"`
+	ProductNav        productNavConfig  `json:"productNav"`
+}
+
+// productNavConfig drives the button injected into the global header. The entries
+// themselves are not part of the configuration: they live in the KV store and are
+// served by /api/v1/navigation.
+type productNavConfig struct {
+	Enabled     bool   `json:"enabled"`
+	IconURL     string `json:"iconUrl"`
+	LinksPerRow int    `json:"linksPerRow"`
 }
 
 // bulkDeleteConfig drives the bulk delete panel and the channel selection mode.
@@ -53,6 +72,7 @@ type historyConfig struct {
 	NoticeEnabled bool   `json:"noticeEnabled"`
 	NoticeText    string `json:"noticeText"`
 	HideInSearch  bool   `json:"hideInSearch"`
+	PendingPolicy string `json:"pendingPolicy"`
 }
 
 // peerReadStateResponse is the counterpart's read position in a direct or group
@@ -74,6 +94,26 @@ type boundaryResponse struct {
 	JoinedAt   int64  `json:"joinedAt"`
 	CutoffAt   int64  `json:"cutoffAt"`
 	ServerTime int64  `json:"serverTime"`
+}
+
+// boundariesRequest asks for the boundaries of several channels in one round trip.
+//
+// The point is latency, not throughput: the webapp fetches every channel it already
+// knows about while it starts up, so switching channels later never has to wait for
+// a network request before it can hide history.
+type boundariesRequest struct {
+	ChannelIDs []string `json:"channelIds"`
+}
+
+// boundariesResponse carries one cutoff per requested channel.
+//
+// A channel that is absent from `cutoffs` means "unknown", not "unrestricted" — the
+// webapp keeps hiding its history until it learns better. That keeps a partial
+// failure on the safe side of the gate.
+type boundariesResponse struct {
+	Mode       string           `json:"mode"`
+	ServerTime int64            `json:"serverTime"`
+	Cutoffs    map[string]int64 `json:"cutoffs"`
 }
 
 // setBoundaryRequest is the admin-only payload used to backfill or clear a boundary.
@@ -99,6 +139,7 @@ func (p *Plugin) initRouter() *mux.Router {
 	apiRouter.HandleFunc("/config", p.handleGetConfig).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/history/boundary", p.handleGetBoundary).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/history/boundary", p.handleSetBoundary).Methods(http.MethodPost)
+	apiRouter.HandleFunc("/history/boundaries", p.handleGetBoundaries).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/read/peer", p.handleGetPeerReadState).Methods(http.MethodGet)
 	apiRouter.HandleFunc("/posts/query", p.handlePreviewPosts).Methods(http.MethodPost)
 	apiRouter.HandleFunc("/posts/purge", p.handlePurgePosts).Methods(http.MethodPost)
@@ -106,6 +147,14 @@ func (p *Plugin) initRouter() *mux.Router {
 
 	// Feeds the channel picker of the admin console panel.
 	apiRouter.HandleFunc("/channels", p.handleListChannels).Methods(http.MethodGet)
+
+	// Product navigation: read by everyone, written by system administrators only.
+	//
+	// Saving accepts PUT and POST on purpose. Every other write endpoint of this plugin
+	// is a POST, and some reverse proxies in front of Mattermost only allow GET/POST,
+	// so restricting this one to PUT would break saving for no reason.
+	apiRouter.HandleFunc("/navigation", p.handleGetNavigation).Methods(http.MethodGet)
+	apiRouter.HandleFunc("/navigation", p.handleSaveNavigation).Methods(http.MethodPut, http.MethodPost)
 
 	return router
 }
@@ -149,6 +198,7 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			NoticeEnabled: config.HistoryNoticeEnabled,
 			NoticeText:    config.HistoryNoticeText,
 			HideInSearch:  config.HideInSearch,
+			PendingPolicy: config.HistoryPendingPolicy,
 		},
 		GroupedTime: groupedTimeConfig{
 			Enabled:    config.GroupedTimeEnabled,
@@ -161,6 +211,11 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		BulkDelete: bulkDeleteConfig{
 			Enabled: config.BulkDeleteEnabled,
 			MaxPost: config.BulkDeleteMaxPosts,
+		},
+		ProductNav: productNavConfig{
+			Enabled:     config.ProductNavEnabled,
+			IconURL:     config.ProductNavIconURL,
+			LinksPerRow: config.ProductNavLinksPerRow,
 		},
 	}
 
@@ -275,6 +330,83 @@ func (p *Plugin) handleGetBoundary(w http.ResponseWriter, r *http.Request) {
 		p.API.LogError("failed to write boundary response", "error", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// handleGetBoundaries resolves the boundary of several channels in one request.
+//
+// It exists purely so the webapp can warm its cache before the user switches
+// channels: without it, the first frame after a switch is painted before the
+// boundary arrives and a sliver of history leaks through.
+func (p *Plugin) handleGetBoundaries(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("Mattermost-User-ID")
+
+	var req boundariesRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBoundaryRequestBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	now := model.GetMillis()
+
+	cutoffs, firstErr := p.collectBoundaries(userID, req.ChannelIDs, now)
+	if firstErr != nil {
+		// Not fatal on purpose: the affected channels are simply absent from the map.
+		p.API.LogError("failed to compute a history boundary", "error", firstErr.Error())
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	response := boundariesResponse{
+		Mode:       p.getConfiguration().HistoryMode,
+		ServerTime: now,
+		Cutoffs:    cutoffs,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		p.API.LogError("failed to write boundaries response", "error", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// collectBoundaries resolves the cutoff of every requested channel, de-duplicated
+// and capped at maxBoundaryChannels.
+//
+// A channel that cannot be resolved is **omitted** rather than reported as 0: the
+// webapp has to treat "missing" as "unknown" and keep gating it. The returned error
+// is the first failure seen, so the caller can log it without losing the rest.
+func (p *Plugin) collectBoundaries(userID string, channelIDs []string, now int64) (map[string]int64, error) {
+	cutoffs := make(map[string]int64, len(channelIDs))
+	seen := make(map[string]struct{}, len(channelIDs))
+
+	var firstErr error
+
+	for _, channelID := range channelIDs {
+		if channelID == "" {
+			continue
+		}
+
+		if _, done := seen[channelID]; done {
+			continue
+		}
+		seen[channelID] = struct{}{}
+
+		if len(seen) > maxBoundaryChannels {
+			break
+		}
+
+		cutoff, err := p.computeCutoff(userID, channelID, now)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+
+			continue
+		}
+
+		cutoffs[channelID] = cutoff.CutoffAt
+	}
+
+	return cutoffs, firstErr
 }
 
 // handleSetBoundary lets a system administrator backfill or clear a boundary, which

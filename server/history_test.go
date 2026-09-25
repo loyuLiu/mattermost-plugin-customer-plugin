@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -241,6 +243,37 @@ func TestConfigurationSanitizeHistory(t *testing.T) {
 	}
 }
 
+func TestConfigurationSanitizePendingPolicy(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", HistoryPendingBlank},
+		{"  ", HistoryPendingBlank},
+		{"nonsense", HistoryPendingBlank},
+		{"SHOW", HistoryPendingShow},
+		{" blank ", HistoryPendingBlank},
+	}
+
+	for _, c := range cases {
+		cfg := configuration{HistoryPendingPolicy: c.in}
+		cfg.sanitize()
+		if cfg.HistoryPendingPolicy != c.want {
+			t.Fatalf("sanitize(%q) = %q, want %q", c.in, cfg.HistoryPendingPolicy, c.want)
+		}
+	}
+}
+
+// failBackend makes every read fail, which is how the batch endpoint is supposed to
+// answer "unknown" rather than "unrestricted".
+type failBackend struct {
+	*fakeBackend
+}
+
+func (f *failBackend) KVGet(key string) ([]byte, *model.AppError) {
+	return nil, model.NewAppError("KVGet", "boom", nil, "", http.StatusInternalServerError)
+}
+
 func TestUserHasJoinedAndLeftChannel(t *testing.T) {
 	backend := newFakeBackend()
 	p := newHistoryTestPlugin(&configuration{}, backend)
@@ -296,5 +329,91 @@ func TestHandleGetBoundary(t *testing.T) {
 	p.handleGetBoundary(w2, missing)
 	if w2.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 without channel_id, got %d", w2.Code)
+	}
+}
+
+func TestHandleGetBoundaries(t *testing.T) {
+	backend := newFakeBackend()
+	p := newHistoryTestPlugin(&configuration{
+		HistoryLockEnabled: true,
+		HistoryMode:        HistoryModeSinceJoin,
+	}, backend)
+
+	for _, rec := range []joinRecord{
+		{UserID: "u1", ChannelID: "c1", JoinedAt: 5000},
+		{UserID: "u1", ChannelID: "c2", JoinedAt: 7000},
+	} {
+		toStore := rec
+		if err := p.store().setJoin(&toStore); err != nil {
+			t.Fatalf("setJoin failed: %v", err)
+		}
+	}
+
+	post := func(body string) *boundariesResponse {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/history/boundaries", strings.NewReader(body))
+		req.Header.Set("Mattermost-User-ID", "u1")
+		w := httptest.NewRecorder()
+
+		p.handleGetBoundaries(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+		}
+
+		var got boundariesResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("failed to decode: %v", err)
+		}
+
+		return &got
+	}
+
+	got := post(`{"channelIds":["c1","c2","c3","c1",""]}`)
+
+	if got.Cutoffs["c1"] != 5000 || got.Cutoffs["c2"] != 7000 {
+		t.Fatalf("unexpected cutoffs: %+v", got.Cutoffs)
+	}
+	if _, present := got.Cutoffs["c3"]; !present || got.Cutoffs["c3"] != 0 {
+		t.Fatalf("an unrestricted channel must be answered with 0, got %+v", got.Cutoffs)
+	}
+	if len(got.Cutoffs) != 3 {
+		t.Fatalf("duplicates and blanks must collapse, got %+v", got.Cutoffs)
+	}
+
+	// A channel that cannot be resolved is omitted on purpose: the webapp reads a
+	// missing entry as "unknown" and keeps hiding, instead of trusting a zero.
+	broken := newHistoryTestPlugin(&configuration{
+		HistoryLockEnabled: true,
+		HistoryMode:        HistoryModeSinceJoin,
+	}, &failBackend{fakeBackend: newFakeBackend()})
+
+	partial, partialErr := broken.collectBoundaries("u1", []string{"c1"}, 10000)
+	if partialErr == nil {
+		t.Fatal("expected the failure to be reported to the caller")
+	}
+	if len(partial) != 0 {
+		t.Fatalf("a failed channel must be left out of the map, got %+v", partial)
+	}
+
+	// Malformed bodies are the caller's fault.
+	bad := httptest.NewRequest(http.MethodPost, "/api/v1/history/boundaries", strings.NewReader(`not json`))
+	bad.Header.Set("Mattermost-User-ID", "u1")
+	badW := httptest.NewRecorder()
+	p.handleGetBoundaries(badW, bad)
+	if badW.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed body, got %d", badW.Code)
+	}
+
+	// The cap keeps one request from turning into thousands of KV reads.
+	many := make([]string, 0, maxBoundaryChannels+10)
+	for i := 0; i < maxBoundaryChannels+10; i++ {
+		many = append(many, "c"+strconv.Itoa(i))
+	}
+	encoded, err := json.Marshal(boundariesRequest{ChannelIDs: many})
+	if err != nil {
+		t.Fatalf("failed to encode: %v", err)
+	}
+
+	if capped := post(string(encoded)); len(capped.Cutoffs) > maxBoundaryChannels {
+		t.Fatalf("expected at most %d entries, got %d", maxBoundaryChannels, len(capped.Cutoffs))
 	}
 }

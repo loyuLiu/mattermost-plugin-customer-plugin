@@ -15,6 +15,11 @@ export function primeServerConfig(config: ServerConfig | null): void {
     cachedConfig = config;
 }
 
+/** Synchronous snapshot of the last primed configuration (null before the first fetch). */
+export function getCachedServerConfig(): ServerConfig | null {
+    return cachedConfig;
+}
+
 /** Fetches the plugin configuration exposed by the server side of this plugin. */
 export async function fetchServerConfig(url: string): Promise<ServerConfig> {
     const response = await fetch(`${url}/api/v1/config`, {

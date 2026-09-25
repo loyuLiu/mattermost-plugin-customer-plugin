@@ -1,12 +1,12 @@
 {
     "id": "com.example.customers-plugin",
     "name": "Customers Plugin",
-    "description": "客户化定制插件：可自定义 Mattermost 聊天窗口中的时间显示格式（如 2026-09-15 09:42），支持管理员统一配置与用户个人偏好。",
+    "description": "客户化定制插件：自定义聊天窗口时间显示格式、新成员历史消息隔离、私信已读/未读标记、批量删除消息，以及在全局头部右上角提供可配置的产品导航。",
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "release_notes_url": "",
     "icon_path": "assets/icon.svg",
-    "version": "0.5.1",
+    "version": "0.6.10",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -21,7 +21,7 @@
         "bundle_path": "webapp/dist/main.js"
     },
     "settings_schema": {
-        "header": "配置 Customers Plugin 的时间显示能力。管理员在此设置全站默认值，用户可在「设置 → 插件 → Customers Plugin」中按个人偏好覆盖（取决于下面是否允许）。",
+        "header": "配置 Customers Plugin 的各项能力。时间格式支持管理员统一配置与用户个人偏好；历史消息隔离、私信已读/未读、批量删除与产品导航均为服务端行为，用户端无法绕过。",
         "footer": "",
         "settings": [
             {
@@ -134,6 +134,34 @@
                 "help_text": "按会话、发送者、关键词和时间范围筛选消息，先预览数量再执行删除。"
             },
             {
+                "key": "ProductNavEnabled",
+                "display_name": "启用产品导航",
+                "type": "bool",
+                "help_text": "开启后，全局头部右上角会显示「产品导航」按钮，点击展开下方配置的分类与网站链接。未配置任何链接时不显示按钮，因此开启本身不会改变界面。",
+                "default": true
+            },
+            {
+                "key": "ProductNavIconUrl",
+                "display_name": "产品导航按钮图标",
+                "type": "text",
+                "help_text": "按钮上显示的图片地址，例如 https://example.com/static/nav.png 或站点相对路径 /static/nav.png。留空则使用插件内置的九宫格图标。仅接受 http(s) 与站点相对路径，其他值会被忽略。建议 20×20 以上、背景透明。",
+                "default": "",
+                "placeholder": "留空 = 使用内置图标"
+            },
+            {
+                "key": "ProductNavLinksPerRow",
+                "display_name": "每行显示的链接数",
+                "type": "number",
+                "help_text": "展开面板后，每个分类一行显示多少个链接，例如填 5 就是一行 5 个，超出部分换到下一行。面板宽度会跟着这个数字自动调整。可填 1 到 12，留空、0 或超出范围则按 5 处理。",
+                "default": 5
+            },
+            {
+                "key": "ProductNavPanel",
+                "display_name": "产品导航",
+                "type": "custom",
+                "help_text": "添加分类，并在每个分类下添加网站链接与 logo 图标。保存后所有用户刷新页面即可在右上角看到。"
+            },
+            {
                 "key": "HistoryLockEnabled",
                 "display_name": "启用新成员历史消息隔离",
                 "type": "bool",
@@ -192,6 +220,23 @@
                 "type": "bool",
                 "help_text": "开启后，被隐藏的消息在搜索结果、右侧线程、置顶与已保存列表中同样不可见。",
                 "default": true
+            },
+            {
+                "key": "HistoryPendingPolicy",
+                "display_name": "边界未取回时消息行的处理",
+                "type": "dropdown",
+                "help_text": "切换频道时服务端可能还没返回该频道的可见边界。「留白」会隐藏行内容但保留行高（不会泄露历史，也不会让滚动条跳动）；「照常显示」会先渲染出来，可能有一瞬间能看到加入前的消息。",
+                "default": "blank",
+                "options": [
+                    {
+                        "display_name": "留白（推荐）",
+                        "value": "blank"
+                    },
+                    {
+                        "display_name": "照常显示",
+                        "value": "show"
+                    }
+                ]
             },
             {
                 "key": "HistoryNoticeEnabled",
