@@ -1,9 +1,13 @@
 /*
- * 用 jsdom 实测「产品导航」引擎。
+ * 用 jsdom 实测「产品导航」。
  *
- * 引擎只依赖 DOM（#RightControlsContainer、注入的按钮、下拉面板）和传入的数据，
- * 不依赖布局，jsdom 足够覆盖：注入/幂等/图标/面板内容/危险链接过滤/开关与关闭/
- * 头部重建后复活/停止后清理。
+ * 导航按钮是 Mattermost 的频道头部按钮（`registerChannelHeaderButtonAction`），
+ * 由 webapp 渲染，这里测不到也无需测；能测的是它复用的那些纯函数：地址清洗、
+ * 保存前校验、条目归一化、正文构建（`buildNavContent`，右侧栏组件用的就是它）、
+ * 列数与宽度、样式表、栏位打开标记，以及条目在「插件启动」与「右侧栏组件」之间
+ * 传递的那座桥。
+ *
+ * 最后用正则读 `src/index.tsx`，守住两条容易踩回去的注册写法。
  *
  * 运行（需先在 webapp 目录 npm install 过）：
  *   NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
@@ -37,6 +41,8 @@ const tsc = path.join(WEBAPP, 'node_modules', 'typescript', 'bin', 'tsc');
 execFileSync(process.execPath, [
     tsc,
     'src/product_nav.ts',
+    'src/product_nav_store.ts',
+    'src/crash_report.ts',
     '--outDir', '.tmp-test-nav',
     '--module', 'commonjs',
     '--target', 'es2019',
@@ -53,35 +59,45 @@ const {
 } = require(path.join(OUT, 'constants.js'));
 
 const {
-    ProductNavEngine,
     normalizeLinksPerRow,
-    panelWidthPx,
+    navContentWidthPx,
     collectNavProblems,
     countUsableNavLinks,
     isBlankNavLink,
     normalizeNavDocument,
     safeNavUrl,
+    buildNavContent,
+    hasNavEntries,
+    installNavStyle,
+    markSidebarOpen,
+    installHeaderButtonQuietStyle,
+    blurHeaderButtonFocus,
+    discoverHeaderButtonDomIds,
+    discoverHeaderButtons,
+    syncHeaderButtonQuietStyle,
+    logHeaderButtonPaint,
+    logHeaderStartupBaseline,
+    noteHeaderRegistration,
+    exposeHeaderDiagnostic,
+    shouldLogHeaderDiag,
 } = require(path.join(OUT, 'product_nav.js'));
 
-/* ---------- 2. 10.12 同构 DOM ---------- */
-const dom = new JSDOM(`<!doctype html><html><body>
-<div id="global-header">
-  <div id="RightControlsContainer">
-    <button id="at_mentions_button"></button>
-    <button id="saved_posts_button"></button>
-    <button id="settings_button"></button>
-  </div>
-</div>
-</body></html>`, {pretendToBeVisual: true, url: 'http://localhost/'});
+const {
+    getNavDocument,
+    setNavDocument,
+    subscribeNavDocument,
+} = require(path.join(OUT, 'product_nav_store.js'));
+
+/* ---------- 2. DOM ---------- */
+const dom = new JSDOM('<!doctype html><html><body></body></html>', {url: 'http://localhost/'});
 
 global.window = dom.window;
 global.document = dom.window.document;
-global.MutationObserver = dom.window.MutationObserver.bind(dom.window);
 
 const document = dom.window.document;
 
-const BUTTON_ID = 'customers-plugin-product-nav-button';
-const PANEL_ID = 'customers-plugin-product-nav-panel';
+const STYLE_ID = 'customers-plugin-product-nav-style';
+const BODY_OPEN_CLASS = 'customers-plugin-nav-rhs-open';
 const LINK = '.customers-plugin-nav-link';
 const CATEGORY = '.customers-plugin-nav-category';
 
@@ -106,23 +122,8 @@ const DATA = {
     ],
 };
 
-function button() {
-    return document.getElementById(BUTTON_ID);
-}
-function panel() {
-    return document.getElementById(PANEL_ID);
-}
-function container() {
-    return document.getElementById('RightControlsContainer');
-}
-function click(el) {
-    el.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true, cancelable: true}));
-}
-function pressEscape() {
-    document.dispatchEvent(new dom.window.KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-}
 function css() {
-    const style = document.getElementById('customers-plugin-product-nav-style');
+    const style = document.getElementById(STYLE_ID);
     return style ? style.textContent : '';
 }
 
@@ -183,53 +184,22 @@ function css() {
     ok(filled[0].links[0].iconUrl === '', '缺 iconUrl 补空串（不会读到 undefined）');
     ok(filled[0].links[0].url === 'https://e.com', '正常数据原样保留');
 
-    console.log('\n[2] 无数据时不注入按钮');
-    const engine = new ProductNavEngine();
-    engine.start();
-    ok(engine.sync() === false, '没有条目时 sync 返回 false');
-    ok(!button(), '没有条目时页面上没有按钮');
+    console.log('\n[2] 样式表（只有正文；按钮由 Mattermost 渲染）');
+    installNavStyle(DEFAULT_PRODUCT_NAV_LINKS_PER_ROW);
+    ok(!!document.getElementById(STYLE_ID), '注入了样式表');
+    ok(css().indexOf('display:grid') >= 0, '链接容器用 grid 布局');
+    ok(css().indexOf('position:fixed') < 0, '不再注入 position:fixed（正文交给右侧栏托管）');
+    ok(css().indexOf(BODY_OPEN_CLASS) >= 0, '样式里带「右侧栏打开」的标记，用来按需加宽栏位');
+    ok(css().indexOf('customers-plugin-nav-button') < 0, '不再注入按钮样式（按钮是频道头部的原生按钮）');
 
-    console.log('\n[3] 有数据后注入按钮');
-    engine.setData(DATA);
-    ok(engine.sync() === true, '有条目时 sync 返回 true');
-    ok(!!button(), '按钮已注入');
-    ok(button().parentElement === container(), '按钮挂在 #RightControlsContainer 下');
-    ok(container().firstChild === button(), '按钮插在最前面（右上角）');
-    ok(button().getAttribute('aria-haspopup') === 'true', '声明了 aria-haspopup');
-    ok(button().getAttribute('aria-expanded') === 'false', '初始 aria-expanded=false');
-    ok(button().title === '产品导航', '按钮提示为「产品导航」');
+    console.log('\n[3] 导航正文构建（右侧栏组件复用的就是它）');
+    const content = buildNavContent(DATA);
+    ok(content.className === 'customers-plugin-nav-content', '根节点带内容 class（样式表认它）');
+    ok(content.querySelectorAll(CATEGORY).length === 2, '渲染了 2 个分类');
+    ok(content.textContent.indexOf('内部系统') >= 0, '分类名渲染出来了');
 
-    console.log('\n[4] 幂等');
-    engine.sync();
-    engine.sync();
-    ok(document.querySelectorAll('#' + BUTTON_ID).length === 1, '页面上只有一个按钮');
-
-    console.log('\n[5] 默认图标与自定义图标');
-    ok(!!button().querySelector('svg'), '默认使用内联 SVG 图标');
-    engine.setIconUrl('https://example.com/nav.png');
-    const withIcon = button();
-    ok(!!withIcon && !!withIcon.querySelector('img'), '自定义图标渲染为 img');
-    ok(withIcon.querySelector('img').getAttribute('src') === 'https://example.com/nav.png', 'img 的 src 正确');
-    engine.setIconUrl('javascript:alert(1)');
-    ok(!!button().querySelector('svg'), '非法图标地址回退为内置图标');
-    engine.setIconUrl('');
-
-    console.log('\n[6] 样式表');
-    const style = document.getElementById('customers-plugin-product-nav-style');
-    ok(!!style, '注入了样式表');
-    ok(!!style && style.textContent.indexOf('cursor:pointer') >= 0, '按钮可点击');
-    ok(!!style && style.textContent.indexOf('position:fixed') >= 0, '面板固定定位');
-
-    console.log('\n[7] 打开面板');
-    engine.open();
-    ok(engine.isOpen(), '面板已打开');
-    ok(!!panel(), '面板在页面上');
-    ok(button().getAttribute('aria-expanded') === 'true', 'aria-expanded=true');
-    ok(panel().querySelectorAll(CATEGORY).length === 2, '渲染了 2 个分类');
-    ok(panel().textContent.indexOf('内部系统') >= 0, '分类名渲染出来了');
-    ok(panel().querySelectorAll(LINK).length === 3, '渲染了 3 个链接（恶意链接被过滤）');
-
-    const links = panel().querySelectorAll(LINK);
+    const links = content.querySelectorAll(LINK);
+    ok(links.length === 3, '渲染了 3 个链接（恶意链接被过滤）');
     ok(links[0].getAttribute('href') === 'https://example.com/ticket', '链接地址正确');
     ok(links[0].getAttribute('target') === '_blank', '新窗口打开');
     ok(links[0].getAttribute('rel') === 'noopener noreferrer', '带 noopener noreferrer');
@@ -237,83 +207,22 @@ function css() {
     ok(!links[1].querySelector('img'), '没有 logo 的链接不渲染 img');
     ok(links[1].querySelector('.customers-plugin-nav-logo').textContent === '知', '无 logo 时显示名称首字');
 
-    console.log('\n[8] 点击按钮关闭 / 再点击打开');
-    click(button());
-    ok(!engine.isOpen() && !panel(), '再次点击关闭面板');
-    click(button());
-    ok(engine.isOpen() && !!panel(), '第三次点击重新打开');
+    console.log('\n[4] 没有条目时不注册按钮');
+    ok(hasNavEntries(DATA) === true, '有条目 -> 显示按钮');
+    ok(hasNavEntries({categories: []}) === false, '分类为空 -> 不显示按钮');
+    ok(hasNavEntries(null) === false, '数据还没到 -> 不显示按钮');
+    ok(buildNavContent(null).textContent.indexOf('暂无产品导航') >= 0, '正文给一句空态文案（而不是空白栏位）');
+    ok(buildNavContent({categories: []}).querySelectorAll(LINK).length === 0, '空数据不渲染任何链接');
 
-    console.log('\n[9] Esc 关闭');
-    pressEscape();
-    ok(!engine.isOpen() && !panel(), 'Esc 关闭面板');
-
-    console.log('\n[10] 点击面板外关闭');
-    engine.open();
-    click(document.getElementById('global-header'));
-    ok(!engine.isOpen() && !panel(), '点击页面其他地方关闭面板');
-
-    console.log('\n[11] 点击面板内部不关闭');
-    engine.open();
-    click(panel());
-    ok(engine.isOpen(), '点击面板本身不关闭');
-
-    console.log('\n[12] 点击链接后关闭');
-    click(panel().querySelector(LINK));
-    ok(!engine.isOpen() && !panel(), '点击链接后关闭面板');
-
-    console.log('\n[13] 打开状态下更新数据会重建面板');
-    engine.open();
-    engine.setData({
-        categories: [{id: 'cat-9', name: '新分类', links: [{id: 'x', name: '只有一条', url: 'https://example.com/one'}]}],
-    });
-    ok(engine.isOpen(), '更新后仍保持打开');
-    ok(panel().querySelectorAll(CATEGORY).length === 1, '分类数已更新');
-    ok(panel().querySelectorAll(LINK).length === 1, '链接数已更新');
-    ok(panel().textContent.indexOf('新分类') >= 0, '内容已更新');
-
-    console.log('\n[14] 清空数据后按钮消失');
-    engine.setData({categories: []});
-    ok(!button(), '没有条目时按钮被移除');
-    ok(!panel(), '面板也被移除');
-
-    console.log('\n[15] 头部重建后按钮复活');
-    engine.setData(DATA);
-    ok(!!button(), '重新注入按钮');
-    const oldButton = button();
-    oldButton.remove();
-    ok(!button(), '头部被 React 重建后按钮消失');
-    engine.sync();
-    ok(!!button() && button() !== oldButton, 'sync 后重新注入新按钮');
-    ok(container().firstChild === button(), '仍然插在最前面');
-
-    console.log('\n[16] 停止后彻底清理');
-    engine.setData(DATA);
-    engine.open();
-    engine.stop();
-    ok(!button(), '按钮已移除');
-    ok(!panel(), '面板已移除');
-    ok(!document.getElementById('customers-plugin-product-nav-style'), '样式表已移除');
-    ok(!document.getElementById(BUTTON_ID), '页面上不再有旧按钮');
-    ok(engine.sync() === false, '停止后 sync 不再注入');
-    click(document.getElementById('global-header'));
-    ok(!panel(), '停止后点击不再打开面板');
-
-    console.log('\n[17] 每行 5 个链接');
-
-    // [16] 把引擎停掉了（样式表随之移除），这里重新起一个。
-    const rowEngine = new ProductNavEngine();
-    rowEngine.start();
+    console.log('\n[5] 每行 5 个链接');
 
     ok(DEFAULT_PRODUCT_NAV_LINKS_PER_ROW === 5, '默认每行 5 个链接');
     ok(new RegExp('repeat\\(' + DEFAULT_PRODUCT_NAV_LINKS_PER_ROW + ',minmax\\(0,1fr\\)\\)').test(css()),
         '链接容器是 ' + DEFAULT_PRODUCT_NAV_LINKS_PER_ROW + ' 列网格（不是靠 flex-wrap 碰运气）');
-    ok(css().indexOf('display:grid') >= 0, '链接容器用 grid 布局');
 
-    // 面板宽度必须装得下 5 个瓦片 + 4 个间距 + 左右内边距，否则第 5 个会换行。
-    const panelRule = (new RegExp('#' + PANEL_ID + '\\{([^}]*)\\}').exec(css()) || [])[1] || '';
-    const widthPx = Number((/width:(\d+)px/.exec(panelRule) || [])[1]);
     const needed = 5 * 56 + 4 * 6 + 2 * 14;
-    ok(widthPx >= needed, '面板宽度 ' + widthPx + 'px 装得下 5 个瓦片（至少 ' + needed + 'px）');
+    ok(navContentWidthPx(5) === needed, '正文需要 ' + needed + 'px 才装得下 5 个瓦片');
+    ok(new RegExp('min-width:' + needed + 'px').test(css()), '样式表按这个宽度请求加宽右侧栏');
 
     // 瓦片自己不能再有固定宽度，否则列宽由它决定、网格失效。
     const linkRule = (/\.customers-plugin-nav-link\{([^}]*)\}/.exec(css()) || [])[1] || '';
@@ -323,20 +232,17 @@ function css() {
     // 5 列时名字会窄到一行显示不下，所以必须限高两行。
     ok(css().indexOf('-webkit-line-clamp:2') >= 0, '名称最多两行（5 列瓦片太窄，单行会被截没）');
 
-    rowEngine.setData({
+    const many = buildNavContent({
         categories: [{id: 'cat-row', name: '一排', links: [1, 2, 3, 4, 5, 6].map((n) => ({
             id: 'l' + n,
             name: '系统' + n,
             url: 'https://example.com/' + n,
         }))}],
     });
-    rowEngine.open();
-    ok(panel().querySelectorAll(LINK).length === 6, '6 条链接全部渲染（第 6 条换到第二行）');
-    ok(panel().querySelectorAll('.customers-plugin-nav-links').length === 1, '一个分类只有一个链接容器');
-    rowEngine.close();
-    rowEngine.stop();
+    ok(many.querySelectorAll(LINK).length === 6, '6 条链接全部渲染（第 6 条换到第二行）');
+    ok(many.querySelectorAll('.customers-plugin-nav-links').length === 1, '一个分类只有一个链接容器');
 
-    console.log('\n[18] 每行个数可配置（插件设置）');
+    console.log('\n[6] 每行个数可配置（插件设置）');
     ok(normalizeLinksPerRow(4) === 4, '填 4 就是 4');
     ok(normalizeLinksPerRow(1) === MIN_PRODUCT_NAV_LINKS_PER_ROW, '最少 1');
     ok(normalizeLinksPerRow(12) === MAX_PRODUCT_NAV_LINKS_PER_ROW, '最多 12');
@@ -347,43 +253,561 @@ function css() {
     ok(normalizeLinksPerRow(99) === DEFAULT_PRODUCT_NAV_LINKS_PER_ROW, '超上限不夹到 12，直接回默认（填错要看得出来）');
     ok(normalizeLinksPerRow(-3) === DEFAULT_PRODUCT_NAV_LINKS_PER_ROW, '负数同样回默认');
 
-    ok(panelWidthPx(1) === 2 * 14 + 56, '1 列：宽度 = 内边距 + 一个瓦片');
-    ok(panelWidthPx(6) === 2 * 14 + 6 * 56 + 5 * 6, '6 列：宽度随列数增长');
-    ok(panelWidthPx(6) > panelWidthPx(5), '列数越多面板越宽（不会让第 6 个换行）');
-    ok(panelWidthPx(0) === panelWidthPx(DEFAULT_PRODUCT_NAV_LINKS_PER_ROW), '非法列数用默认宽度');
+    ok(navContentWidthPx(1) === 2 * 14 + 56, '1 列：宽度 = 内边距 + 一个瓦片');
+    ok(navContentWidthPx(6) === 2 * 14 + 6 * 56 + 5 * 6, '6 列：宽度随列数增长');
+    ok(navContentWidthPx(6) > navContentWidthPx(5), '列数越多需要的宽度越大（不会让第 6 个换行）');
+    ok(navContentWidthPx(0) === navContentWidthPx(DEFAULT_PRODUCT_NAV_LINKS_PER_ROW), '非法列数用默认宽度');
 
-    // 运行时改列数：样式表就地重写，面板不用重启、打开着也能立刻变宽。
-    rowEngine.start();
-    rowEngine.setData(DATA);
-    rowEngine.setLinksPerRow(6);
-    ok(rowEngine.getLinksPerRow() === 6, 'setLinksPerRow 生效');
+    // 改列数就是重写样式表：同一 id 的那一份被就地改写，不会出现第二份。
+    installNavStyle(6);
     ok(new RegExp('repeat\\(6,minmax\\(0,1fr\\)\\)').test(css()), '样式表立刻改成 6 列');
-    ok(Number((/width:(\d+)px/.exec((new RegExp('#' + PANEL_ID + '\\{([^}]*)\\}').exec(css()) || [])[1] || '') || [])[1]) === panelWidthPx(6),
-        '面板宽度同步变成 ' + panelWidthPx(6) + 'px');
+    ok(new RegExp('min-width:' + navContentWidthPx(6) + 'px').test(css()), '右侧栏请求宽度同步变成 ' + navContentWidthPx(6) + 'px');
 
-    rowEngine.open();
-    const widthBefore = panel().querySelectorAll(LINK).length;
-    rowEngine.setLinksPerRow(3);
-    ok(panel().querySelectorAll(LINK).length === widthBefore, '打开状态下改列数，链接不会丢（面板被重建）');
-    ok(rowEngine.isOpen(), '改列数后面板仍然开着');
-    rowEngine.close();
+    console.log('\n[7] 样式与「栏位打开」标记');
+    // 右侧栏组件也会装一次样式：它可能在按钮之前挂载，那时文档里还没有样式表。
+    installNavStyle(6);
+    ok(!!document.getElementById(STYLE_ID), 'installNavStyle 补回了样式表');
+    ok(new RegExp('repeat\\(6,minmax\\(0,1fr\\)\\)').test(css()), '装的时候带的是传入的列数');
+    installNavStyle(3);
+    ok(document.querySelectorAll('style#' + STYLE_ID).length === 1, '反复安装不会出现第二份样式表');
 
-    // 换个引擎单独验证构造参数。
-    rowEngine.stop();
-    const rowEngine2 = new ProductNavEngine({linksPerRow: 8});
-    rowEngine2.start();
-    ok(rowEngine2.getLinksPerRow() === 8, '构造参数直接生效');
-    ok(new RegExp('repeat\\(8,minmax\\(0,1fr\\)\\)').test(css()), '8 列的样式已写入');
-    rowEngine2.stop();
+    markSidebarOpen(true);
+    ok(document.body.classList.contains(BODY_OPEN_CLASS), '栏位打开 -> body 打标记（样式据此加宽栏位）');
+    markSidebarOpen(false);
+    ok(!document.body.classList.contains(BODY_OPEN_CLASS), '栏位关闭 -> 标记移除');
+    document.getElementById(STYLE_ID).remove();
 
-    console.log('\n[19] 容器缺失时不报错');
-    const engine2 = new ProductNavEngine();
-    container().remove();
-    engine2.start();
-    engine2.setData(DATA);
-    ok(engine2.sync() === false, '容器不存在时 sync 返回 false');
-    ok(!button(), '容器不存在时不注入按钮');
-    engine2.stop();
+    console.log('\n[8] 条目在「插件启动」与「右侧栏组件」之间的桥');
+    let seen = 0;
+    let lastSeen = null;
+    const unsubscribe = subscribeNavDocument((next) => {
+        seen++;
+        lastSeen = next;
+    });
+    setNavDocument(DATA);
+    ok(seen === 1, '条目更新会通知订阅者（右侧栏据此重渲染）');
+    ok(lastSeen === DATA && getNavDocument() === DATA, '订阅者拿到的是最新条目');
+    unsubscribe();
+    setNavDocument(null);
+    ok(seen === 1, '退订后不再收到通知');
+    ok(getNavDocument() === null, '条目可以被清空');
+
+    console.log('\n[9] 频道头部按钮不再互相点亮（点导航，批量删除按钮不该跟着亮）');
+    // 这条走得比源码远一步：`registerChannelHeaderButtonAction` 返回的是它内部 `generateId()`
+    // 造的 id，但在真实页面上按 `<id>ChannelHeaderButton` 去查，**一个都查不到**（现场日志全是
+    // missing: true）。也就是说此前几版写的 `#id` 规则从未命中过任何按钮。所以不再推导 id，
+    // 改成按 aria-label 在 DOM 里把按钮找出来，再用它真实的 id 写规则。
+    const QUIET_ID = 'customers-plugin-header-button-quiet';
+
+    const navBtn = document.createElement('button');
+    navBtn.id = 'e45d9cc5-ccf0-42f5-90ac-db93e37744a2ChannelHeaderButton';
+    navBtn.className = 'channel-header__icon';
+    navBtn.setAttribute('aria-label', '产品导航');
+    document.body.appendChild(navBtn);
+
+    const bulkBtn = document.createElement('button');
+    bulkBtn.id = 'c3c27c3c-fa5e-463e-8ea0-57b5308c8dcaChannelHeaderButton';
+    bulkBtn.className = 'channel-header__icon';
+    bulkBtn.setAttribute('aria-label', '批量删除消息');
+    document.body.appendChild(bulkBtn);
+
+    const foreignBtn = document.createElement('button');
+    foreignBtn.id = 'other-pluginChannelHeaderButton';
+    foreignBtn.className = 'channel-header__icon';
+    foreignBtn.setAttribute('aria-label', '别人的插件按钮');
+    document.body.appendChild(foreignBtn);
+
+    const mutedBtn = document.createElement('button');
+    mutedBtn.id = 'mutedPostsChannelHeaderButton';
+    mutedBtn.className = 'channel-header__icon';
+    mutedBtn.setAttribute('aria-label', '静音');
+    document.body.appendChild(mutedBtn);
+
+    ok(discoverHeaderButtonDomIds().length === 2, '按 aria-label 只认出本插件的两个按钮');
+    ok(discoverHeaderButtonDomIds().indexOf(navBtn.id) >= 0, '认出的是导航按钮的真实 DOM id');
+    ok(discoverHeaderButtonDomIds().indexOf(bulkBtn.id) >= 0, '认出的是批量删除按钮的真实 DOM id');
+    ok(discoverHeaderButtonDomIds().indexOf(foreignBtn.id) < 0, '别的插件的头部按钮不被卷进来');
+    ok(discoverHeaderButtonDomIds().indexOf(mutedBtn.id) < 0, 'Mattermost 自己的头部图标也不被卷进来');
+
+    // 但真实页面上这招一直没命中过：`HeaderIconWrapper` 渲染的是裸按钮，标签压根不在上面。
+    // 现场读数里「我们的:0 个」正是这么来的——也就是说此前的静音规则一条都没落到按钮上，
+    // 批量删除按钮还在照常画它自己的 hover。图标上自己埋的 data-cp-glyph 才是能靠的东西。
+    const glyphHost = document.createElement('div');
+    glyphHost.className = 'channel-header';
+    const glyphNav = document.createElement('button');
+    glyphNav.id = 'glyph-nav-id';
+    glyphNav.innerHTML = '<svg data-cp-glyph="product-nav"></svg>';
+    const glyphBulk = document.createElement('button');
+    glyphBulk.id = 'glyph-bulk-id';
+    glyphBulk.innerHTML = '<svg data-cp-glyph="bulk-delete"></svg>';
+    const glyphStranger = document.createElement('button');
+    glyphStranger.id = 'glyph-stranger-id';
+    glyphStranger.innerHTML = '<img data-cp-glyph="somebody-elses"/>';
+    const glyphPlain = document.createElement('button');
+    glyphPlain.id = 'glyph-plain-id';
+    glyphPlain.innerHTML = '<svg></svg>';
+    [glyphNav, glyphBulk, glyphStranger, glyphPlain].forEach((el) => glyphHost.appendChild(el));
+    document.body.appendChild(glyphHost);
+
+    const byGlyph = discoverHeaderButtons([glyphNav, glyphBulk, glyphStranger, glyphPlain]);
+    ok(byGlyph.length === 2, '按图标标记认按钮：带标记的两条算本插件的，异体标记与没标记的一条都不算');
+    const glyphDerived = byGlyph.filter((head) => head.domId === 'glyph-nav-id' || head.domId === 'glyph-bulk-id');
+    ok(glyphDerived.length === 2 && glyphDerived.every((head) => head.label === ''),
+        '裸按钮上没有标签也照样认出来（这正是现场读数里卡住的地方）');
+    ok(byGlyph.some((head) => head.domId === 'glyph-bulk-id' && head.kind === 'bulk'),
+        '批量删除按钮按 bulk-delete 标记归到「全状态静音」那一档');
+    ok(byGlyph.some((head) => head.domId === 'glyph-nav-id' && head.kind === 'nav'),
+        '导航按钮按 product-nav 标记归到「只还原基础态」那一档');
+    ok(byGlyph.every((head) => head.domId !== 'glyph-stranger-id' && head.domId !== 'glyph-plain-id'),
+        '别的插件的标记和没标记的按钮都不认');
+
+    const byLabel = discoverHeaderButtons([navBtn, bulkBtn, glyphStranger, glyphPlain]);
+    ok(byLabel.length === 2 && byLabel.every((head) => head.domId.indexOf('glyph') < 0),
+        '没有标记时退回按标签认（老版本那条路还在）');
+
+    [glyphNav, glyphBulk, glyphStranger, glyphPlain].forEach((el) => el.remove());
+    document.body.removeChild(glyphHost);
+
+    syncHeaderButtonQuietStyle();
+    const quietStyle = document.getElementById(QUIET_ID);
+    ok(Boolean(quietStyle), '注入了头部按钮配色规则');
+    const quietCss = quietStyle ? quietStyle.textContent : '';
+
+    ok(quietCss.indexOf('#' + navBtn.id) >= 0, '规则用导航按钮的真实 id');
+    ok(quietCss.indexOf('#' + bulkBtn.id) >= 0, '规则用批量删除按钮的真实 id');
+    ok(quietCss.indexOf('#' + foreignBtn.id) < 0, '不会顺手压掉别的插件按钮的外观');
+    ok(quietCss.indexOf('#' + mutedBtn.id) < 0, '不会顺手压掉 Mattermost 自己图标的外观');
+
+    const blockOf = (id) => {
+        const at = quietCss.indexOf('#' + id);
+        return quietCss.slice(at, quietCss.indexOf('{', at));
+    };
+    const navRule = blockOf(navBtn.id);
+    const bulkRule = blockOf(bulkBtn.id);
+    ok(navRule.indexOf('#' + navBtn.id + ',') >= 0, '基础态排在第一位（不管什么状态都先还原成它）');
+    ok(navRule.indexOf('--active') >= 0, '导航按钮：Mattermost 的 --active 修饰类压掉');
+    ok(navRule.indexOf(':hover') < 0, '导航按钮保留它自己的 hover 高亮（截图反馈：只有它该亮）');
+    ok(bulkRule.indexOf(':focus') >= 0 && bulkRule.indexOf(':focus-visible') >= 0, '删除按钮：焦点态与键盘焦点态一并覆盖');
+    ok(bulkRule.indexOf(':hover') >= 0 && bulkRule.indexOf(':active') >= 0, '删除按钮：hover 与按下态一并覆盖');
+    ok(bulkRule.indexOf('--active') >= 0, '删除按钮：--active 修饰类也覆盖');
+    ok(quietCss.indexOf(':hover') > quietCss.indexOf('#' + bulkBtn.id),
+        'hover 只出现在删除按钮那一段，不会顺手把导航按钮的 hover 也压掉');
+
+    ok(/outline:none!important/.test(quietCss) && /box-shadow:none!important/.test(quietCss) &&
+        /border:none!important/.test(quietCss), '描边、阴影、边框全压掉（这些就是「一圈蓝」的画法）');
+    ok(/background:none!important/.test(quietCss) && /color:inherit!important/.test(quietCss),
+        '背景整个清空（background 而非 background-color，背景图画的圆环也活不下来）、颜色回到继承值');
+    ok(/content:none!important/.test(quietCss) && /::before,/.test(quietCss), '伪元素画的装饰也去掉');
+    ok(new RegExp('#' + navBtn.id + ' \\*\\{outline:none!important').test(quietCss),
+        '按钮内部的后代（svg 图标）同样不许画描边/阴影/滤镜');
+    ok(!/:hover\{background-color:rgba\(/.test(quietCss), '不再有单独的 hover 规则（重排落到邻居上也不会亮）');
+
+    // 面板 CN：数字开头的 id 不能写成 #1abc...，要降级成属性选择器。
+    const numericBtn = document.createElement('button');
+    numericBtn.id = '9numericChannelHeaderButton';
+    numericBtn.className = 'channel-header__icon';
+    numericBtn.setAttribute('aria-label', '批量删除消息');
+    document.body.appendChild(numericBtn);
+    bulkBtn.remove();
+    syncHeaderButtonQuietStyle();
+    const numericCss = document.getElementById(QUIET_ID).textContent;
+    ok(numericCss.indexOf('[id="9numericChannelHeaderButton"]') >= 0,
+        '数字开头的 id 用属性选择器（#9... 不是合法选择器）');
+    ok(numericCss.indexOf('#9numericChannelHeaderButton,') < 0, '不会产出非法的 # 选择器');
+    numericBtn.remove();
+    bulkBtn.setAttribute('aria-label', '批量删除消息');
+    document.body.appendChild(bulkBtn);
+
+    const before = document.getElementById(QUIET_ID).textContent;
+    syncHeaderButtonQuietStyle();
+    syncHeaderButtonQuietStyle();
+    ok(document.querySelectorAll('#' + QUIET_ID).length === 1, '反复同步只留一张样式表');
+    ok(document.getElementById(QUIET_ID).textContent === before, '反复同步产出同一份规则（幂等）');
+
+    const focusRing = navBtn;
+    focusRing.focus();
+    ok(document.activeElement === focusRing, '前置条件：焦点在插件头部按钮上');
+    blurHeaderButtonFocus();
+    ok(document.activeElement !== focusRing, '点导航时焦点被摘掉，焦点环不再留在按钮上');
+
+    const otherButton = document.createElement('button');
+    otherButton.id = 'settings_button';
+    document.body.appendChild(otherButton);
+
+    otherButton.focus();
+    blurHeaderButtonFocus();
+    ok(document.activeElement === otherButton, '焦点不在插件按钮上时不动它（Mattermost 自己的按钮照旧）');
+
+    // 真实页面上插件按钮长在 .channel-header 里，而诊断按「这个容器在不在」决定列头部
+    // 还是列全页——列全页会一口气刷出上百项（现场日志就这么淹过一次）。
+    const headerHost = document.createElement('div');
+    headerHost.className = 'channel-header';
+    [navBtn, bulkBtn, foreignBtn, mutedBtn].forEach((el) => headerHost.appendChild(el));
+    document.body.appendChild(headerHost);
+
+    console.log('\n[10] 头部按钮的一次性诊断（打印真实计算样式，用来收口的临时手段）');
+    global.window.getComputedStyle = (el) => ({
+        outlineStyle: 'none',
+        outlineWidth: '',
+        outlineColor: '',
+        boxShadow: 'none',
+        backgroundColor: 'rgba(0,0,0,0)',
+        backgroundImage: 'none',
+    });
+    const infos = [];
+    const realConsoleInfo = console.info;
+    const DIAG_FLAG = 'customers-plugin:diag';
+    console.info = (...args) => infos.push(args);
+
+    // 诊断要能按需取，不能每次点按钮都在后台跑四轮 computed style。
+    logHeaderButtonPaint('切换后立刻（没开都没问）');
+    const silent = infos.length;
+    exposeHeaderDiagnostic();
+    const handle = typeof dom.window.customersPluginDiag === 'function' ? dom.window.customersPluginDiag : null;
+    if (handle) {
+        handle('手动取样');
+    }
+    dom.window.localStorage.setItem(DIAG_FLAG, '1');
+    logHeaderButtonPaint('切换后立刻');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    console.info = realConsoleInfo;
+    const flagWasOn = shouldLogHeaderDiag();
+    dom.window.localStorage.removeItem(DIAG_FLAG);
+
+    ok(silent === 0, '没开也没问的时候一行都不打：点击路径上不留诊断');
+    ok(typeof handle === 'function', '诊断挂在控制台的 customersPluginDiag 上——想取哪一眼就敲哪一眼');
+    ok(flagWasOn === true, '开了 flag 之后 shouldLogHeaderDiag 认账');
+    // 结构行也带着取样时刻的名字，只数「头部按钮」那一行。
+    ok(infos.filter((args) => /头部按钮 手动取样/.test(String(args[0]))).length === 2,
+        '手敲一次出两行读数（立刻一眼 + 布局稳定一眼），不用开关、不用刷新');
+
+    const flagLines = infos.filter((args) => /头部按钮 切换后立刻/.test(String(args[0])));
+    ok(flagLines.length === 2, '开了 flag，取样点照旧一条日志一条（切换后立刻，以及布局稳定后）');
+    ok(flagLines.length > 0 && !/头部按钮 切换后立刻 \+1000ms/.test(String(flagLines[flagLines.length - 1][0])),
+        '一屏之内只有前两轮（+1000ms/+2000ms 留给后面，免得刷屏）');
+    ok(/头部按钮 切换后立刻/.test(String(flagLines[0][0])), '第一次是切换后立刻取样');
+    ok(/头部按钮 切换后立刻 \+300ms/.test(String(flagLines[1][0])), '第二次等频道头部重排稳定后再取样');
+    ok(shouldLogHeaderDiag() === false, 'flag 摘掉之后又是安静的');
+    ok(typeof flagLines[0][1] === 'undefined',
+        '打的是一行字符串而不是对象：对象在控制台会折叠，抄出来只剩「Object」，现场日志白跑');
+    const line = String(flagLines[1][0]);
+    if (process.env.DIAG_LINE) {
+        console.log('DIAG>>' + line);
+    }
+
+    ok(/侧栏:/.test(line) && /我们的:2 个/.test(line) && /已发现/.test(line),
+        '一次抄写就读全：侧栏在不在场、找到几个本插件按钮、已钉住了哪些真实 id');
+    ok(line.indexOf(navBtn.id) >= 0 && line.indexOf(bulkBtn.id) >= 0,
+        '两个按钮的真实 DOM id 都印在这一行里（不再靠推导拼）');
+    ok(!new RegExp(foreignBtn.id).test(line), '别的插件的按钮不混进这一行');
+    const rows = line.split(/(?=<)/).filter((part) => part.charAt(0) === '<');
+    ok(rows.length === 2, '认得全本插件的两个按钮时就只列它们（发现式，不按 class 猜）');
+    ok(rows.every((row) => row.indexOf('#' + bulkBtn.id) >= 0 || row.indexOf('#' + navBtn.id) >= 0),
+        '列出的两段正是这两个按钮');
+    ok(rows.every((row) => /已钉/.test(row)), '本插件的按钮都标成已钉住（规则确实写进了样式表）');
+    ok(rows.every((row) => /hover[YNyn]/.test(row) && /焦点[YNyn]/.test(row)),
+        '标出鼠标在不在它上面、此刻有没有焦点——能直接分辨是真高亮还是重排后的误悬停');
+    ok(rows.every((row) => row.indexOf('hovernull') < 0),
+        '悬停状态问不出来时写 ?，不让 null 混进读数');
+    ok(rows.every((row) => /\|框/.test(row) && /\|影/.test(row) && /\|/.test(row)),
+        '焦点环与阴影的真实值都在行里（一眼看出还有没有在画圈）');
+    ok(rows.every((row) => /\d+,\d+ \d+x\d+/.test(row)),
+        '每段带屏幕位置：按钮是被摘掉、还是被重排挪到了鼠标底下');
+
+    navBtn.remove();
+    bulkBtn.remove();
+    foreignBtn.remove();
+    mutedBtn.remove();
+    otherButton.remove();
+    headerHost.remove();
+    document.getElementById(QUIET_ID).remove();
+
+    console.log('\n[10.5] 启动基线：一条、等头部挂上、不刷屏');
+    {
+        noteHeaderRegistration('productNav', true, '3 条可用');
+        noteHeaderRegistration('bulkDelete', true, '开关已开');
+
+        const headerHost = document.createElement('div');
+        headerHost.className = 'channel-header';
+        [navBtn, bulkBtn, foreignBtn, mutedBtn].forEach((el) => headerHost.appendChild(el));
+        document.body.appendChild(headerHost);
+
+        const closed = [];
+        console.info = (...args) => closed.push(args);
+        logHeaderStartupBaseline();
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        console.info = realConsoleInfo;
+
+        // 只数基线那一条：上一次取样的定时器还会在这段时间里落下来，混着算没意义。
+        const baseline = closed.filter((args) => /头部按钮 启动时（面板未开）/.test(String(args[0])));
+        const baselineLine = baseline.length > 0 ? String(baseline[0][0]) : '';
+
+        if (process.env.DIAG_LINE) {
+            console.log('DIAG>>baseline=' + baseline.length + '\n' + baseline.join('\n'));
+        }
+
+        ok(baseline.length === 1, '启动时只打一条：四轮全打的那版把控制台淹过一次');
+        ok(/注册:导航Y\(3 条可用\)/.test(baselineLine) && /删除Y\(开关已开\)/.test(baselineLine),
+            '这一行带上「按钮到底注册了没」——DOM 里找不到按钮时，一眼分清是没注册还是没渲染');
+        ok(/头部可点共 2 个/.test(baselineLine), '头部挂上了就只列头部那几个（此刻是找到的两个本插件按钮）');
+
+        headerHost.remove();
+
+        // 注册决定还没出来时不许打：打早了那一格只会是「?」，正好是这条读数存在的理由。
+        // 这一轮要等满，把它自己的定时器放干净，下一轮的数量才算得准。
+        console.info = (...args) => closed.push(args);
+        noteHeaderRegistration('productNav', null, '还没读完配置');
+        noteHeaderRegistration('bulkDelete', null, '还没读完配置');
+        const beforeUndecided = closed.length;
+        logHeaderStartupBaseline();
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        console.info = realConsoleInfo;
+        ok(closed.slice(beforeUndecided).filter((args) => /头部按钮 启动时/.test(String(args[0]))).length === 0,
+            '注册决定还没出来时一条都不打（否则那一格只会印个 ?）');
+
+        noteHeaderRegistration('productNav', false, '没有可用条目');
+        noteHeaderRegistration('bulkDelete', false, '开关未开');
+
+        console.info = (...args) => closed.push(args);
+        const beforeUnmounted = closed.length;
+        logHeaderStartupBaseline();
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        console.info = realConsoleInfo;
+
+        const only = closed.slice(beforeUnmounted).filter((args) => /头部按钮 启动时（面板未开）/.test(String(args[0])));
+        ok(only.length === 1, '决定出来了、头部仍没挂上，也只打一条');
+        const lateLine = only.length > 0 ? String(only[0][0]) : '';
+        ok(/头部未挂载/.test(lateLine), '没挂上就直说没挂上');
+        ok(!/<[A-Z]+#/.test(lateLine), '没挂上时不列全页清单（那一版一刷就是 97 项）');
+        ok(/注册:导航N\(没有可用条目\)/.test(lateLine), '没注册的原因也印出来');
+    }
+
+    console.log('\n[10.6] 补钉认不出按钮时，插件自己说一句（不用在控制台敲命令）');
+    {
+        // 现场反馈里， COND 那条命令敲出去只回了个函数定义——让用户在控制台打字本身
+        // 就是会失败的一步。所以真出事的那一次由插件自己打：头部已经挂上、却一个
+        // 都没认出来，这一条是唯一会记下它的读数。
+        const stranger = document.createElement('button');
+        stranger.className = 'channel-header__icon';
+        stranger.setAttribute('aria-label', '频道文件');
+        stranger.setAttribute('data-cp-glyph', 'somebody-elses');
+        const headerHost = document.createElement('div');
+        headerHost.className = 'channel-header';
+        headerHost.appendChild(stranger);
+
+        // 现场读数里最要紧的那一格：按钮已经渲染进头部了，可它是个空壳 —— 没有
+        // id、没有标签、图标里也没有标记（读数里就是那个 `无 id 无标签 0,0 0x0`）。
+        // 认法对这种按钮无能为力，所以只能靠「开过侧栏之后还没认上」这一句说破它。
+        const rendered = document.createElement('button');
+        rendered.className = 'channel-header__icon';
+        headerHost.appendChild(rendered);
+        document.body.appendChild(headerHost);
+
+        const closed = [];
+
+        // 侧栏还没开过：Mattermost 这一轮根本没把按钮放进头部，那是常态不是故障。
+        // 现场那两条一模一样的「补钉没认出来」就属于这种 —— 启动时按钮不在 DOM。
+        console.info = (...args) => closed.push(args);
+        syncHeaderButtonQuietStyle();
+        syncHeaderButtonQuietStyle();
+        console.info = realConsoleInfo;
+        ok(closed.length === 0, '侧栏还没开过时一句话都不说（按钮本来就没进场，说了就是噪音）');
+
+        // 开过侧栏 = 点过导航 = 频道头部重渲染、按钮第一次进场的那一刻。这一轮还
+        // 认不出，才是故障，才值得占一行。
+        document.body.classList.add('customers-plugin-nav-rhs-open');
+        console.info = (...args) => closed.push(args);
+        syncHeaderButtonQuietStyle();
+        syncHeaderButtonQuietStyle();
+        console.info = realConsoleInfo;
+
+        if (process.env.DIAG_LINE) {
+            console.log('DIAG>>closed=' + JSON.stringify(closed.map((a) => String(a[0]).slice(0, 200))));
+        }
+
+        const missed = closed.filter((args) => /头部按钮 补钉没认出来/.test(String(args[0])));
+        const missedLine = missed.length > 0 ? String(missed[0][0]) : '';
+
+        ok(missed.length === 1, '同一轮里认不出来只说一句（backoff 五连不会刷五遍）');
+        ok(/我们的:0 个/.test(missedLine), '这一句说清是「一个都没认出来」');
+        ok(/头部可点共 2 个/.test(missedLine), '头部挂上了就列头部那几个（别人的标记不算本插件的）');
+        ok(/BUTTON/.test(missedLine) && /未钉/.test(missedLine),
+            '读数里列着那个在场的按钮、且标着「未钉」：一眼看出是认不上标记，还是按钮根本不在 DOM');
+        const stranded = closed.filter((args) => /头部长这样/.test(String(args[0])));
+        ok(stranded.length === 1 && /<button/.test(String(stranded[0][0])),
+            '把头部本身的 HTML 印出来（现场那个 0x0 无名按钮，光看列表是查不出是谁的）');
+
+        stranger.remove();
+        // 头部得挂回文档里再认：`headerRoot()` 走的是 `document.querySelector`，
+        // 摘出文档的容器连自己都找不到，范围会退回整个页面。
+        document.body.appendChild(headerHost);
+
+        // 认回来了就复位：下次真出事还得说。
+        const glyph = document.createElement('span');
+        glyph.setAttribute('data-cp-glyph', 'product-nav');
+        glyph.setAttribute('aria-label', '产品导航');
+        navBtn.appendChild(glyph);
+        headerHost.appendChild(navBtn);
+        console.info = (...args) => closed.push(args);
+        syncHeaderButtonQuietStyle();
+        console.info = realConsoleInfo;
+        ok(discoverHeaderButtonDomIds().indexOf(navBtn.id) >= 0, '前置条件：带上标记之后认得回来');
+        syncHeaderButtonQuietStyle();
+        ok(closed.filter((args) => /头部按钮 补钉没认出来/.test(String(args[0]))).length === 1,
+            '认回来之后不再补报（这条读数不是每步都打）');
+        navBtn.remove();
+        headerHost.remove();
+
+        // 侧栏已经开过、头部里却一个本插件按钮都没有：按钮没进场，不是认不出来。
+        // 这两种情况只有那一行读数分得开，所以头上的标记得跟着摘掉再比。
+        document.body.classList.remove('customers-plugin-nav-rhs-open');
+        const emptyHeader = document.createElement('div');
+        emptyHeader.className = 'channel-header';
+        document.body.appendChild(emptyHeader);
+        console.info = (...args) => closed.push(args);
+        syncHeaderButtonQuietStyle();
+        console.info = realConsoleInfo;
+        ok(closed.filter((args) => /头部按钮 补钉没认出来/.test(String(args[0]))).length === 1,
+            '按钮压根没进场时保持安静（那不是认不出来）');
+        emptyHeader.remove();
+    }
+
+    console.log('\n[10.7] 按钮晚一步进场时，盯着头部等它（backoff 已经跑完那会儿）');
+    {
+        // 现场读数显示：注册早就成了（注册:导航Y/删除Y），按钮却在启动时压根不在
+        // DOM —— 只有等频道头部下一次重渲染（点开导航就是其中之一）它才出现。backoff
+        // 那时已经跑完，固定时刻的补钉会整个错过按钮存在的那一段。
+        const host = document.createElement('div');
+        host.className = 'channel-header';
+        document.body.appendChild(host);
+
+        const late = [];
+        console.info = (...args) => late.push(args);
+        syncHeaderButtonQuietStyle();
+
+        // 上一节那个观察器还挂着、等着它自己的容器消失；把待跑的回调放干净，
+        // 免得它抢在本节之前把观察目标改到别处。
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        const arriving = document.createElement('button');
+        arriving.id = 'late-nav-btn';
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('data-cp-glyph', 'product-nav');
+        arriving.appendChild(icon);
+        host.appendChild(arriving);
+
+        // 观察器是「等一拍再搜」的（一次重渲染是一串突变，不能每个都搜一遍），
+        // 所以这里要等过那一拍。
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        console.info = realConsoleInfo;
+
+        if (process.env.DIAG_LATE) {
+            console.log('DIAG>>alate=' + JSON.stringify(late.map((a) => String(a[0]).slice(0, 200))));
+            console.log('DIAG>>sheets=' + document.querySelectorAll('.channel-header').length +
+                ' html=' + document.body.innerHTML.slice(0, 300));
+        }
+
+        ok(discoverHeaderButtonDomIds().indexOf('late-nav-btn') >= 0,
+            '按钮晚到一步也认得上（不用再猜它什么时候进 DOM）');
+        const sheet = document.getElementById(QUIET_ID);
+        ok(Boolean(sheet) && sheet.textContent.indexOf('#late-nav-btn') >= 0,
+            '认上就钉进样式表，鼠标落在上面画的也是静音过的那套');
+        ok(late.filter((args) => /头部按钮/.test(String(args[0]))).length === 0,
+            '等待期间一句话都不说（还在等，不是没认出来）');
+
+        host.remove();
+    }
+
+    console.log('\n[11] index.tsx 的注册写法（踩过坑的两处）');
+    const indexSource = fs.readFileSync(path.join(WEBAPP, 'src', 'index.tsx'), 'utf8');
+
+    const sidebarCall = indexSource.match(/registerRightHandSidebarComponent\(([^;]*?)\);/);
+    ok(Boolean(sidebarCall), 'index.tsx 注册了右侧栏组件');
+    const sidebarArg = sidebarCall ? sidebarCall[1].trim() : '';
+    ok(sidebarArg.startsWith('withBoundary(ProductNavSidebar)'), '第一个参数是组件引用（withBoundary(ProductNavSidebar)）');
+    ok(!/<ProductNavSidebar\s*\/>/.test(sidebarArg), '没有写成 <ProductNavSidebar/>：Mattermost 会再 createElement 一次，元素当类型用会报 React #130');
+
+    // 插件里抛出的异常不能把宿主的整棵 React 树带下去——那正是「整页白屏」。
+    const rootRegistrations = indexSource.match(/registerRootComponent\([^)]*\)/g) || [];
+    ok(rootRegistrations.length >= 4 && rootRegistrations.every((call) => /withBoundary\(/.test(call)),
+        '每个 registerRootComponent 都包了错误边界（我们抛错不会让整页白屏）');
+    ok(/installCrashReporter\(\);/.test(indexSource) &&
+        indexSource.indexOf('installCrashReporter();') < indexSource.indexOf('installPostStreamFilter({'),
+        '崩溃上报装在启动最前面（手机没控制台可读，错误得落到页面上）');
+
+    // 导航栏位按钮必须在批量删除按钮之前注册：`ChannelHeaderPlug` 按注册顺序渲染，
+    // 超过 15 个插件按钮才会收成下拉。
+    const navButtonAt = indexSource.indexOf('registerChannelHeaderButtonAction');
+    const bulkButtonAt = indexSource.indexOf('registerChannelHeaderButtonAction', navButtonAt + 1);
+    ok(navButtonAt >= 0 && bulkButtonAt > navButtonAt, '注册了两个频道头部按钮');
+    ok(indexSource.indexOf('ProductNavIcon') >= 0 && indexSource.indexOf('ProductNavIcon') < navButtonAt + 400,
+        '导航按钮用的是我们自己的图标组件');
+    ok(indexSource.indexOf('toggleRHSPlugin') > 0, '按钮点了派发的是 toggleRHSPlugin（开合交给 Mattermost）');
+
+    // 导航和「勾选消息」是插件的两种模式：开着勾选去开侧栏，侧栏开着、批量删除按钮
+    // 却还亮着，消息行上还挂着勾。开侧栏时主动退出勾选。
+    const navBlock = indexSource.slice(navButtonAt, bulkButtonAt);
+    ok(/setBulkSelectActive\(false\)/.test(navBlock), '点导航时先退出批量删除选择模式，批量删除按钮不会留在点亮状态');
+    ok(/blurHeaderButtonFocus\(\)/.test(navBlock), '点导航时把焦点从频道头部按钮上摘掉（否则焦点环会漂到批量删除按钮上）');
+    ok(navBlock.indexOf('logHeaderButtonPaint') < 0,
+        '点导航的回调里不留诊断打印：诊断按需取，点击路径只做这件事该做的事');
+    ok(/\(\)\s*=>\s*setBulkSelectActive\(true\)/.test(indexSource),
+        '批量删除按钮的回调是「一行、一件事」——导航按钮照这个形状写');
+    ok(/logHeaderStartupBaseline\(\);/.test(indexSource),
+        '启动时仍自动取一条「面板未开」的基线读数，这是插件自己会打的唯一一条（不再四连刷）');
+    ok(/noteHeaderRegistration\('productNav'/.test(indexSource) &&
+        /noteHeaderRegistration\('bulkDelete'/.test(indexSource),
+        '两个头部按钮的注册决定都记下来了（DOM 里找不到时，这一格能分清是没注册还是没渲染）');
+    ok(/exposeHeaderDiagnostic\(\);/.test(indexSource), '诊断句柄挂到控制台（customersPluginDiag）');
+    const navSource = fs.readFileSync(path.join(WEBAPP, 'src', 'product_nav.ts'), 'utf8');
+
+    // 外观锁定靠的是「在 DOM 里找到按钮」，而不是「拿注册返回的 id 推出来」——后者推出来的
+    // id 在真实页面上根本不存在（现场日志全是 missing: true，等于规则全空转）。
+    // lastIndexOf：文件顶部同样有这些名字（import），那里当然在注册之前。
+    const quietInstallAt = indexSource.lastIndexOf('syncHeaderButtonQuietStyle()');
+    ok(quietInstallAt > bulkButtonAt, '外观锁定装在两次注册之后');
+    ok(!/installHeaderButtonQuietStyle\(headerButtonIds\)/.test(indexSource),
+        '不再把注册返回值当真实 DOM id 用（那个推断已被现场日志否证）');
+    ok(/discoverHeaderButtons/.test(navSource), '改成在 DOM 里回查按钮（先按图标标记，再按标签兜底）');
+    ok(/data-cp-glyph/.test(fs.readFileSync(path.join(WEBAPP, 'src', 'components', 'icons.tsx'), 'utf8')) &&
+        /data-cp-glyph/.test(fs.readFileSync(path.join(WEBAPP, 'src', 'components', 'product_nav_icon.tsx'), 'utf8')),
+        '两个图标都带上 data-cp-glyph：裸按钮没有 aria-label 也能认出是哪个');
+    ok(indexSource.indexOf('headerButtonIds') < 0, 'index.tsx 不再收集注册返回值');
+
+    ok(navSource.indexOf('RightControlsContainer') < 0, '不再往全局头部注入按钮（已改到频道头部）');
+    ok(navSource.indexOf('insertBefore') < 0, '不再往 React 渲染的头部里插节点（插进去会被下一次重渲染吃掉）');
+    ok(navSource.indexOf('observe(root, {childList: true, subtree: true})') >= 0,
+        '只观察头部节点的进出：按钮晚到时补钉一次，一个 DOM 节点都不改写');
+
+    console.log('\n[12] 崩溃取证：手机浏览器没有控制台，错误得自己出现在页面上');
+    {
+        const crash = require(path.join(OUT, 'crash_report.js'));
+
+        crash.uninstallCrashReporter();
+        crash.resetCrashRecords();
+
+        crash.installCrashReporter();
+        crash.installCrashReporter(); // 装两遍也只记一条
+        crash.recordCrash(new Error('boom'), 'test');
+
+        const records = crash.getCrashRecords();
+        ok(records.length === 1, '记下一条（重复安装不会重复记录）');
+        ok(records.length > 0 && records[0].message === 'boom', 'message 留下来了');
+        ok(records.length > 0 && /boom/.test(records[0].stack), 'stack 也留下来了');
+
+        const banner = document.getElementById('customers-plugin-crash-banner');
+        ok(Boolean(banner), '错误直接画到页面上（React 树崩了也还看得见）');
+        ok(Boolean(banner) && /boom/.test(banner.textContent || ''), '横幅里带着错误正文，截图就能反馈');
+
+        for (let i = 0; i < 10; i++) {
+            crash.recordCrash(new Error('more-' + i), 'test');
+        }
+        ok(crash.getCrashRecords().length === 5, '最多留 5 条（第一屏那几条才是解释白屏的）');
+
+        crash.uninstallCrashReporter();
+        crash.resetCrashRecords();
+        ok(!document.getElementById('customers-plugin-crash-banner'), '卸载后横幅收走，不留残骸');
+    }
 
     console.log('\n========================================');
     console.log('  PASS ' + pass + ' / FAIL ' + fail);

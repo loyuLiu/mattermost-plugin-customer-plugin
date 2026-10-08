@@ -9,7 +9,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.6.9",
+    "version": "0.6.28",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -189,6 +189,16 @@ const manifest = JSON.parse(`
                 "help_text": "按钮上显示的图片地址，例如 https://example.com/static/nav.png 或站点相对路径 /static/nav.png。留空则使用插件内置的九宫格图标。仅接受 http(s) 与站点相对路径，其他值会被忽略。建议 20×20 以上、背景透明。",
                 "placeholder": "留空 = 使用内置图标",
                 "default": "",
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "ProductNavLinksPerRow",
+                "display_name": "每行显示的链接数",
+                "type": "number",
+                "help_text": "展开面板后，每个分类一行显示多少个链接，例如填 5 就是一行 5 个，超出部分换到下一行。面板宽度会跟着这个数字自动调整。可填 1 到 12，留空、0 或超出范围则按 5 处理。",
+                "placeholder": "",
+                "default": 5,
                 "hosting": "",
                 "secret": false
             },

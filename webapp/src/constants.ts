@@ -41,6 +41,13 @@ export const DEFAULT_BULK_DELETE_MAX_POSTS = 500;
 /** Title of the product navigation button and of its panel. */
 export const PRODUCT_NAV_TITLE = '产品导航';
 
+/**
+ * Tooltip, and therefore `aria-label`, of the bulk-delete button in the channel
+ * header. Shared with `product_nav.ts`, which recognises that button by this string
+ * instead of by an identifier it cannot reliably derive.
+ */
+export const BULK_DELETE_TOOLTIP = '批量删除消息';
+
 /** Links shown on one row of a navigation category when the server says nothing. */
 export const DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = 5;
 

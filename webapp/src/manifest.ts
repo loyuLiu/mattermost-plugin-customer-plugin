@@ -8,7 +8,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.6.10",
+    "version": "0.6.29",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {

@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.preferenceKey = exports.MAX_PRODUCT_NAV_LINKS_PER_ROW = exports.MIN_PRODUCT_NAV_LINKS_PER_ROW = exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = exports.PRODUCT_NAV_TITLE = exports.DEFAULT_BULK_DELETE_MAX_POSTS = exports.DEFAULT_GROUPED_POSITION = exports.RESYNC_INTERVAL_MS = exports.SELECTOR_ALL_TIMES = exports.SELECTOR_POST_TIME = exports.DEFAULT_FORMAT = exports.SETTING_USER_TIMEZONE = exports.SETTING_CUSTOM_FORMAT = exports.SETTING_TIME_SOURCE = exports.TIME_SOURCE_OFF = exports.TIME_SOURCE_CUSTOM = exports.TIME_SOURCE_SYSTEM = exports.PREFERENCE_CATEGORY = exports.PLUGIN_ID = void 0;
+exports.preferenceKey = exports.MAX_PRODUCT_NAV_LINKS_PER_ROW = exports.MIN_PRODUCT_NAV_LINKS_PER_ROW = exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = exports.BULK_DELETE_TOOLTIP = exports.PRODUCT_NAV_TITLE = exports.DEFAULT_BULK_DELETE_MAX_POSTS = exports.DEFAULT_GROUPED_POSITION = exports.RESYNC_INTERVAL_MS = exports.SELECTOR_ALL_TIMES = exports.SELECTOR_POST_TIME = exports.DEFAULT_FORMAT = exports.SETTING_USER_TIMEZONE = exports.SETTING_CUSTOM_FORMAT = exports.SETTING_TIME_SOURCE = exports.TIME_SOURCE_OFF = exports.TIME_SOURCE_CUSTOM = exports.TIME_SOURCE_SYSTEM = exports.PREFERENCE_CATEGORY = exports.PLUGIN_ID = void 0;
 const manifest_1 = __importDefault(require("./manifest"));
 exports.PLUGIN_ID = manifest_1.default.id;
 /**
@@ -35,6 +35,12 @@ exports.DEFAULT_GROUPED_POSITION = 'cursor';
 exports.DEFAULT_BULK_DELETE_MAX_POSTS = 500;
 /** Title of the product navigation button and of its panel. */
 exports.PRODUCT_NAV_TITLE = '产品导航';
+/**
+ * Tooltip, and therefore `aria-label`, of the bulk-delete button in the channel
+ * header. Shared with `product_nav.ts`, which recognises that button by this string
+ * instead of by an identifier it cannot reliably derive.
+ */
+exports.BULK_DELETE_TOOLTIP = '批量删除消息';
 /** Links shown on one row of a navigation category when the server says nothing. */
 exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = 5;
 /** Smallest and largest row size the administrator may ask for. */

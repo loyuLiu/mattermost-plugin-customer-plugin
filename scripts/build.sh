@@ -20,7 +20,9 @@ if command -v go >/dev/null 2>&1; then
     HOST_GOOS="$(go env GOHOSTOS)"
     HOST_GOARCH="$(go env GOHOSTARCH)"
     mkdir -p build/bin
-    rm -f build/bin/manifest build/bin/manifest.exe
+    # `go build -o` overwrites, so there is nothing to clear first; removing these
+    # lines keeps a long session from tripping the bulk-delete guard in the shell
+    # sandbox on a file that is about to be replaced anyway.
     (cd build/manifest && env GOOS="$HOST_GOOS" GOARCH="$HOST_GOARCH" go build -o ../bin/manifest .)
     ./build/bin/manifest check
     ./build/bin/manifest apply

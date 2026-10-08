@@ -22,6 +22,9 @@ const TrashIcon = () => (
         strokeLinejoin='round'
         aria-hidden='true'
         focusable='false'
+        // The handle the quieting rules key off: the button around this glyph is
+        // Mattermost's, and it carries no label or id this plugin can recognise.
+        data-cp-glyph='bulk-delete'
     >
         <path d='M3 6h18'/>
         <path d='M8 6V4h8v2'/>

@@ -662,26 +662,34 @@ export class HistoryGate {
             return;
         }
 
-        const host = document.getElementById('channel-header');
-        if (!host) {
-            return;
-        }
-
         const notice = existing ?? document.createElement('div');
         if (!existing) {
             notice.id = NOTICE_ID;
-            notice.style.display = 'inline-flex';
-            notice.style.alignItems = 'center';
-            notice.style.marginLeft = '8px';
-            notice.style.padding = '2px 8px';
-            notice.style.borderRadius = '4px';
-            notice.style.fontSize = '12px';
-            notice.style.maxWidth = '320px';
-            notice.style.whiteSpace = 'nowrap';
-            notice.style.overflow = 'hidden';
-            notice.style.textOverflow = 'ellipsis';
-            notice.style.opacity = '0.75';
-            host.appendChild(notice);
+            // The notice used to be appended into `#channel-header` — a React-managed
+            // subtree that re-renders constantly, and one node of ours too many in
+            // the very place the phone white-screen's `removeChild` conflict was
+            // rooted. A fixed pill on `document.body` owns nothing React wants back.
+            notice.setAttribute('style', [
+                'position:fixed',
+                'top:64px',
+                'left:50%',
+                'transform:translateX(-50%)',
+                'z-index:60',
+                'display:inline-flex',
+                'align-items:center',
+                'padding:2px 8px',
+                'border-radius:4px',
+                'font-size:12px',
+                'max-width:320px',
+                'white-space:nowrap',
+                'overflow:hidden',
+                'text-overflow:ellipsis',
+                'opacity:0.75',
+                'pointer-events:none',
+                'background:rgba(var(--center-channel-bg-rgb, 255, 255, 255), 0.9)',
+                'color:rgba(var(--center-channel-color-rgb, 63, 67, 80), 1)',
+            ].join(';'));
+            document.body.appendChild(notice);
         }
 
         const text = this.noticeText;

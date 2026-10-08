@@ -6,7 +6,7 @@
 2. **新成员历史消息隔离** —— 新加入频道的成员看不到其加入之前的历史消息。
 3. **私信已读 / 未读标记** —— 私信里每条消息右上角显示「已讀」或「未讀」：别人发的看**你**有没有读过，你发的看**对方**有没有读过。
 4. **批量删除消息** —— 管理员在控制台按条件（会话 / 发送者 / 关键词 / 时间范围）批量删除，也可在会话里勾选消息删除。
-5. **产品导航** —— 全局头部右上角显示一个导航按钮（图标可自定义），点击展开分类与网站链接，每个链接可带自己的 logo。
+5. **产品导航** —— 频道头部按钮（和「批量删除消息」同一排，图标可自定义），点击后导航显示在 **Mattermost 自己的右侧栏**里，按分类列出网站链接，每个链接可带自己的 logo。
 ![效果圖](./result.png)
 ---
 
@@ -77,7 +77,17 @@ Mattermost 会把同一个人在 5 分钟内连续发送的多条消息合并成
 
 ### 1.6 产品导航
 
-全局头部右上角（`@提及`、`已保存`、`设置` 那一排按钮里）多一个导航按钮，点击弹出下拉面板，按分类列出网站链接。
+频道头部（`批量删除消息` 按钮左边）多一个导航按钮，点击后 **Mattermost 的右侧栏**展开，按分类列出网站链接。
+
+按钮和批量删除走同一条注册通道（`registerChannelHeaderButtonAction`），按注册顺序排在批量删除**之前**，所以是「导航在上、批量删除在下」；只有插件按钮超过 15 个时 Mattermost 才会把它们一起收进「⋯」下拉（我们只有两个，所以两个都是直接露出的图标按钮）。
+
+两者是**互斥模式**：点导航会退出「勾选消息」的选择模式（清掉消息行上的勾与底部工具条），并把**焦点从频道头部按钮上摘掉**。
+
+除此之外，两个按钮的**外观被钉死成同一个样子**：插件按钮本身不带激活态（`HeaderIconWrapper` 只渲染一个裸 `<button>`），点完之后出现在另一个按钮上的「一圈蓝」是样式表画的（焦点环 / 按下态 / `--active` 修饰类）。与其猜是哪一个状态，不如把**每个状态——连 `:hover` 在内——都写成同一份外观**，**注意**：id 不能靠 `registerChannelHeaderButtonAction` 的返回值拼——那个返回值与渲染出来的
+DOM id 并不是同一个（现场诊断显示按它拼出来的 id 一个都查不到，规则全成了空转）。要按按钮的
+`aria-label` 在 DOM 里回查真实 id，再据此写 `#id` 选择器（数字开头的 id 降级成 `[id="…"]`）。
+
+**连 hover 都不给反馈**，是因为这才是「只有点导航才会连累批量删除」的真正原因：打开右侧栏会让频道头部**重排**（空间不够时两个按钮会被挤成上下两排），重排之后鼠标原位落到邻居按钮上，邻居给出的悬停反馈就被读成「点开了导航、批量删除亮了」；反过来点批量删除不打开任何面板、头部不动，所以永远不会牵连导航。代价是这两个按钮没有鼠标配色反馈（Mattermost 自带的提示气泡仍在），换来的是彻底互不影响。
 
 | 能力 | 说明 |
 | --- | --- |
@@ -85,7 +95,7 @@ Mattermost 会把同一个人在 5 分钟内连续发送的多条消息合并成
 | 分类 | 控制台里可视化增删、上下移动顺序 |
 | 链接 | 每个分类下可加多个链接，各自填名称、地址、logo 图片 URL（logo 留空则显示名称首字） |
 | 打开方式 | 点击链接在新标签页打开，带 `rel="noopener noreferrer"` |
-| 关闭方式 | 再点按钮、点击面板外、按 Esc、点链接后自动关闭 |
+| 关闭方式 | 再点按钮、按 Esc、点标题栏的 ×、打开回复串或搜索（Mattermost 自己收栏位） |
 | 空数据 | 一个条目都没配时**按钮自动隐藏**，所以开启开关本身不会改变界面 |
 | 保存前校验 | 名称或地址没填、地址不是 `https://` 开头（也不是 `/` 开头的站点相对路径）的行会**在保存前被点名拦下**，不会"保存了却消失" |
 
@@ -131,7 +141,8 @@ customers-plugin/
         ├── read_status.ts                   # 私信已读/未读徽标引擎
         ├── bulk_select.ts                   # 会话内勾选删除引擎 + 按钮与工具条共享的 store
         ├── bulk_delete_api.ts               # 批量删除接口封装（query / purge / delete / channels）
-        ├── product_nav.ts                   # 产品导航引擎：注入头部按钮 + 下拉面板
+        ├── product_nav.ts                   # 产品导航：条目清洗与校验 + 构建导航正文 + 样式表
+        ├── product_nav_store.ts             # 插件启动 / 右侧栏之间的桥（条目）
         ├── product_nav_api.ts               # 产品导航接口封装（GET / PUT navigation）
         ├── resolve.ts                       # 合并「管理员默认值 + 用户偏好」
         ├── user_settings.ts                 # 读取 pp_<pluginId> 偏好
@@ -146,7 +157,8 @@ customers-plugin/
             ├── read_status_controller.tsx   # 已读/未读控制器（root component）
             ├── bulk_delete_bar.tsx          # 勾选模式的浮动工具条（root component）
             ├── bulk_delete_panel.tsx        # 系统控制台的批量删除面板（custom setting）
-            ├── product_nav_controller.tsx   # 产品导航控制器（root component）
+            ├── product_nav_icon.tsx         # 频道头部按钮的图标（自定义 logo 或内置九宫格）
+            ├── product_nav_sidebar.tsx      # 右侧栏里的导航正文（registerRightHandSidebarComponent）
             ├── product_nav_panel.tsx        # 系统控制台的产品导航编辑面板（custom setting）
             ├── icons.tsx                    # 内联 SVG 图标（垃圾桶）
             ├── custom_format_setting.tsx    # 用户设置里的自定义格式输入框
@@ -536,11 +548,18 @@ HasPermissionToChannel(actorID, channelID, PermissionDeleteOthersPosts)     // �
 
 ## 3.8 产品导航是怎么做的（第五个功能）
 
-### 3.8.1 为什么不用 `registerAppBarComponent`
+### 3.8.1 按钮为什么和批量删除走同一条注册通道
 
-插件 API 里有 `registerAppBarComponent(iconUrl, action, tooltip, supportedProductIds)`，看起来正合适，但它属于 **App Bar**，需要传 `ProductScope`（`boards` / `playbooks` 等），且在 Channels 里默认不开 —— 用它等于把入口交给另一套产品开关。用户要的是「全局头部右上角」，所以直接往头部容器里注入按钮。
+批量删除的「批量删除消息」按钮是 `registry.registerChannelHeaderButtonAction(icon, action, tooltip, dropdownText)`
+注册的**频道头部按钮**，不是自己往 DOM 里塞的。0.6.13 起产品导航也走这条通道：
 
-DOM 事实（10.12 实测）：`global_header.tsx` 渲染 `<GlobalHeaderContainer id='global-header'>`，其中 `right_controls/right_controls.tsx` 渲染 `id={'RightControlsContainer'}`，里面是 `@提及`、`已保存`、`设置` 等按钮。导航按钮 `insertBefore(container.firstChild)`，落在这排按钮的最前面，仍在右上角。
+- 两个按钮共用一套外壳（图标尺寸 18px、`currentColor`、hover 态、tooltip），样式不用自己维护；
+- 位置由 Mattermost 排：插件按钮按**注册顺序**从左到右渲染，所以只要导航**先于批量删除注册**，它就落在批量删除的**左边**（下拉展开时导航一排在上、批量删除在下）；
+- 超过数量上限时 Mattermost 会把插件按钮收进「⋯」下拉，顺序同样跟着注册顺序走；
+- 头部容器（`RightControlsContainer`）是 React 的，`insertBefore` 抢过来的节点下次重渲染就没了 —— 0.6.13 起彻底不再碰全局头部，也没有 MutationObserver 在旁边守着。
+
+注册条件：`ProductNavEnabled` 打开**并且**至少有一条能用的链接（没有条目时按钮自动不注册，
+不会给用户一个点开就空无一物的入口）。
 
 ### 3.8.2 数据为什么存在 KV 而不是插件配置
 
@@ -564,14 +583,48 @@ PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整�
 
 前端渲染时再做一次同样的判断，所以即便有人手工改了 KV，也插不进 `javascript:` 链接。
 
-### 3.8.4 面板与关闭行为
+### 3.8.4 正文显示在 Mattermost 自己的右侧栏
 
-面板是纯 DOM（不是 React 组件）—— 头部由 React 管，没法往里挂组件，纯 DOM 也更好测。关闭时机：再点按钮、点击面板外（`click` 捕获阶段判断 target 是否在按钮/面板内）、按 Esc、点链接后。空条目时按钮主动移除自己，MutationObserver + 3 秒全量重扫保证 React 重建头部后按钮能复活。
+0.6.11 之前，按钮点开的是一个自建的 `position:fixed` 下拉面板。0.6.11 起改成原生右侧栏：
+栏位本身、标题栏、关闭按钮、动画、以及和回复串 / 搜索结果共用同一列，全部交给 Mattermost，
+插件只负责栏位里面的内容。
+
+三个部件互相传不了 props，所以靠 `product_nav_store.ts` 这座桥（和批量删除的频道头部按钮
+是同一个套路）：
+
+| 部件 | 谁创建 | 干什么 |
+| --- | --- | --- |
+| 频道头部按钮 | `registerChannelHeaderButtonAction(<ProductNavIcon/>, …)` | 图标走 `ProductNavIcon`（可自定义 logo，过一遍 `safeNavUrl`）；点击时**不自己开栏位**，只 `dispatch(toggleRHSPlugin)` |
+| 右侧栏正文 | `ProductNavSidebar`（React） | `registerRightHandSidebarComponent()` 注册；用 `buildNavContent()` 填充栏位内部；挂载时再拉一次条目，保证管理员改完列表这一次的栏位就是最新的 |
+| 插件启动 | `index.tsx` | 拉条目 → 写进 store（按钮「有没有条目」要靠它判断），同时装上样式表 |
+
+`ProductNavController` 已经删掉：按钮和正文都不再需要一个常驻的可见组件来驱动，
+条目从「启动时 + 每次打开」两个时点拉，比原来的常驻轮询更轻。
+
+两个关键事实（10.12 源码核对过）：
+
+- **`component` 参数要给组件本身，不能给元素**。虽然公开的注册表类型写的是
+  `ReactResolvable`（允许元素也允许组件类型），但 10.12 只有 `title` / `icon` 会走
+  `resolveReactElement()`，`component` 是原样存进 redux 的，渲染处再 `createElement()` 一次。
+  写 `registerRightHandSidebarComponent(<ProductNavSidebar/>, title)` 就等于把「元素」当成
+  「类型」交给 React，点开按钮瞬间报 **React error #130（got: object）**，栏位一片空白。
+  正确写法：`registerRightHandSidebarComponent(ProductNavSidebar, title)`。
+- `registry.registerRightHandSidebarComponent(component, title)` 直接返回
+  `{id, showRHSPlugin, hideRHSPlugin, toggleRHSPlugin}` —— 开/关/切换的 action 是现成的，
+  不用自己拼 `UPDATE_RHS_STATE`（它的载荷是 `{state: 'plugin', pluggableId}`，
+  `RHSStates.PLUGIN === 'plugin'`）。
+- 判断「右侧栏现在显示的是不是我们」必须三个条件都成立：
+  `views.rhs.isOpen && rhsState === 'plugin' && pluggableId === 我们的 id`。
+  只看 `pluggableId` 会误判 —— 栏位关掉后这个字段**不会清**，而且搜索 / 回复串也会占用这一列。
+
+关闭时机不再由插件操心（Esc、标题栏的 ×、打开回复串都会让 Mattermost 自己收起来）。
+栏位的宽度按列数预留：正文挂载时给 `<body>` 打一个标记 class，样式表据此设
+`min-width`，卸载时移除，所以只在导航打开期间生效。
 
 ### 3.8.5 每行的链接数可在插件设置里改
 
 设置项 **`ProductNavLinksPerRow`**（数字，1–12，默认 5）：每个分类一行显示多少个链接，
-超出的换到下一行。面板宽度跟着这个数字自动调整，改完保存、用户刷新页面即生效。
+超出的换到下一行。右侧栏预留的宽度跟着这个数字自动调整，改完保存、用户刷新页面即生效。
 
 链接容器用 **CSS grid**（`repeat(N, minmax(0,1fr))`），不是 `flex-wrap`：
 
@@ -580,15 +633,16 @@ PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整�
   所以看起来"只能排 2 个"；
 - 改成 grid 后每行固定 N 个，瓦片 `width:100%` 由列宽决定，名称长短不再影响排布。
 
-面板宽度由列数反推，保证 N 个瓦片一定放得下：
+需要的宽度由列数反推，保证 N 个瓦片一定放得下：
 `宽度 = 2×14（内边距） + N×56（最小瓦片） + (N-1)×6（间距）`，5 列即 332px。
+这个值作为栏位的 `min-width`（见 3.8.4），比它宽时保持 Mattermost 的默认宽度，比它窄时才撑开。
 
 **越界值回默认而不是夹到边界**：填 0、负数、大于 12 或非数字，一律按 5 处理 —— 夹到 12 会让
 「填错了」看不出来（还以为是自己想要的）。服务端 `sanitizeProductNav()` 与前端
 `normalizeLinksPerRow()` 各做一次，两边规则一致。
 
-运行时改这个值不重启引擎：`ProductNavEngine.setLinksPerRow()` 就地重写样式表，打开着的面板
-会按新宽度重建，链接不会丢。
+运行时改这个值不重启引擎：`ProductNavEngine.setLinksPerRow()` 就地重写样式表，右侧栏下次
+渲染就是新的列数与宽度。
 
 瓦片变窄后名称一行放不下，所以名称限高**两行**（`-webkit-line-clamp:2` + `max-height` 兜底），
 完整名称仍在 `title` 里。
@@ -605,6 +659,93 @@ PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整�
 3. 所有遍历统一写成 `(category.links || [])`。
 
 **新增任何遍历导航数据的代码，都要走 `normalizeNavDocument()` 或 `|| []`**，别直接 `.map`。
+
+### 3.8.7 头部按钮：不要靠推断去猜它长在哪
+
+这两个头部按钮（产品导航 / 批量删除消息）反复出问题的根源只有一个 —— **每一版都在猜按钮的 class、id 或挂载位置**，而猜错一次，后面所有的样式规则就全变成空转（写对了却命不中任何元素，所以现象一动不动）。现场字典据否掉的推断包括：
+
+- 「`registerChannelHeaderButtonAction` 返回的 id 就是按钮的 DOM id」—— 错，拼出来的 id 在页面上根本不存在；
+- 「按钮带 `channel-header__icon` 类」—— 错，一次现场扫描里，这个选择器只命中最远两个原生图标（频道文件、频道详情），两个插件按钮一个都不在里面；
+- 「按 aria-label 回查就行」—— 差一点，但**扫描范围钉在这条 class 上，标签匹配再准也扫不到**；而且 `HeaderIconWrapper` 渲染的裸按钮本来就没有 aria-label，标签这条路在真实页面上一直是 0 个；
+- 「再压一层更花的 CSS」—— 错，规则从没命中过按钮，加多少层都不亮。v0.6.24 先把「认得是哪个按钮」修好。
+
+现在的口径（v0.6.20 起）是发现式的，不认任何 class（v0.6.23 起附带注册侧探针，见下）：
+
+1. 在 `.channel-header` 容器里取**所有**可点元素（`button`、`[role="button"]`、`a`）；找不到这个容器就退到整个页面，容器改名只会让搜索变宽，不会静默失配；
+2. 认按钮靠**图标上自己埋的标记** `data-cp-glyph`（`product-nav` / `bulk-delete`）—— 这是本插件唯一能自己埋下、又不依赖 `HeaderIconWrapper` 肯不肯写标签的钩子；
+3. 没有标记时退回用 `labelOf()` 取标签（自身 `aria-label` → `title` → 后代任意 `aria-label`），再没有才看 `…ChannelHeaderButton` 这个 id 尾巴；
+4. 拿到真实 DOM id 后，才把规则写进样式表（按 id 写，特异性压过任何修饰类）。
+
+**v0.6.24 更要记牢这条**：`HeaderIconWrapper` 渲染的是裸按钮，`aria-label` 压根不在它上面，所以 v0.6.19–0.6.23 那几版**按标签找按钮一直是 0 个**——现场读数 `我们的:0 个` 正是这么来的，等于所有静音规则一次都没落到批量删除按钮上，它照旧画自己的 hover。图标自己带标记之后，认按钮才和 Mattermost 给不给标签脱钩。
+
+**要改这里，先看一遍 `discoverHeaderButtons()` 和 `glyphOf()`，不要新增第二轮猜测。**
+
+钉下来的两套外观也不再是一份（v0.6.24）：
+
+- **批量删除按钮**：基础态、`:focus`、`:focus-visible`、`:hover`、`:active`、`--active` 全压回同一份（背景/描边/阴影/边框/颜色全 `!important`，伪元素 `content:none`，内部后代 svg 的阴影滤镜也清掉）；
+- **产品导航按钮**：只还原基础态与 `--active`，**保留 Mattermost 自己的 hover** —— 截图反馈明确：点开导航时该亮的只有它。
+
+还有一条 Mattermost 自己的行为要记住：侧栏开合期间，插件频道头部按钮会被摘掉 / 延时恢复（`CHANNEL_HEADER_BUTTON_DISABLE_TIMEOUT`，10.12 是 1000ms）。所以「点开导航的瞬间，批量删除按钮像被点亮」很可能不是插件按钮本身 —— 侧栏一开，频道头部重排，顶替它位置的**原生**图标接受了焦点环或鼠标悬停，那件高亮我们的样式表够不着。
+
+脱离现场、需要自己判断的时候，插件里留了临时诊断 `logHeaderButtonPaint()`：按 0/300/1000/2000ms 打四轮，单列本插件的按钮、列出头部所有可点元素的真实计算样式与屏幕位置，并附上侧栏是否在场和头部结构。
+
+**它默认不打。** 唯一的例外：插件启动时自动取一次「面板未开」的基线读数——那一眼别处补不上。要取其它时刻，两条路：
+
+- 控制台敲 `customersPluginDiag('点导航后')`：想看哪一眼就敲哪一眼，不用开关、不用刷新；
+- 或者开 flag 让它每次都打：`localStorage.setItem('customers-plugin:diag', '1')`（摘掉用 `removeItem`）。
+
+诊断刻意**不挂在工作路径上**。点导航的回调现在和批量删除按钮的回调是同一个形状——一件事、一行，既不打印也不重写样式表；留下的是按需补钉 `syncHeaderButtonQuietStyle()`（幂等：频道头部在插件启动时通常还没挂载，之后没有别的机会再找它一次）。右侧栏挂载时也会补钉一次（`product_nav_sidebar.tsx`）：**开侧栏才是频道头部重渲染、把两个插件按钮放进 DOM 的那一刻**，补钉赶在重排之前，鼠标落到哪儿都不会亮。
+
+##### 唯一的自动读数：开过侧栏之后还认不出按钮时，插件自己说一句
+
+补钉这一路**安静是常态**。现场那次启动读数里 `我们的:0 个` 不是故障——`注册:` 那格明明是 `导航Y(9 条可用)/删除Y(开关已开)`，两个按钮都注册成了，可头部里只有 `toggleFavorite`、`channelHeaderDropdownButton`、`channelHeaderFilesButton`、`channel-info-btn` 加一个 `无 id 无标签 0,0 0x0` 的空壳,**压根没有我们的按钮**：注册归注册，Mattermost 要到频道头部下一次重渲染（点开侧栏就是其中之一）才把它们放进来。那种时刻说「没认出来」，说的是"它还没来"，第八版起就是这样被淹掉的。
+
+所以判据换了一个：**导航侧栏开过（点过导航）之后还认不出，才是故障**。`syncHeaderButtonQuietStyle()` 这时会自己打印一行（`补钉没认出来（第 N 次）`）并紧跟一句 `头部长这样：<头部 HTML>`，同一轮只说一次；认回来就复位。
+
+这一条存在的理由很实在：取其它时刻**要用户在控制台打字**，而这一步已经失败过一次——敲了 `customersPluginDiag`，回过来的是函数定义本身。真出事的那一次由插件说，比让人敲一遍可靠。判读：
+
+- 那一行 + `头部长这样:` 后头那个无名 `0x0` 的空壳 → **图标没渲染出来**（`data-cp-glyph` 压根不在 DOM 里），要查的是图标组件与打包；
+- 有那一行但没有空壳、列着的是带标记的按钮且标 `未钉` → 按钮在 DOM 里，标记却在（认法与标记不一致）；
+- 没有那一行 → 已经钉上了，那圈蓝不是背景/描边/阴影/边框画的。
+
+**它打的是一行字符串，不是一个对象。** 上一版打的是对象，控制台把 payload 折成 `Object`，贴回来的日志里只剩「…现状 启动时（面板未开） Object」——设备跑通了、诊断却什么都没回答。现在每行长这样，展开折叠也一样能读：
+
+```
+[customers-plugin] 头部按钮 切换后立刻｜注册:导航Y(5 条可用)/删除N(开关未开)｜侧栏:#right-hand-sidebar｜已发现:<id>ChannelHeaderButton｜我们的:2 个｜头部可点共 4 个：<BUTTON#<id>|产品导航|已钉|hovern|焦点Y|框无|影无|1234,56 32x32> …
+```
+
+**启动时只打一条**（`logHeaderStartupBaseline()`），不是四连刷。它会等频道头部挂上、等两个注册决定都出来再打；头部迟迟不挂上就只打一句简短的。此前那一版在头部没挂上时把扫描范围退到整个 document，一次刷 97 项 ×4 轮，控制台直接被自己淹掉。
+
+看输出时抓这两格就够：
+
+- `注册:导航Y(…)/删除Y(…)` 但 `我们的:0 个` → **按钮注册了、DOM 里没有**：Mattermost 侧的问题，不是样式表；
+- `注册:导航N(没有可用条目)` → **按钮根本没注册**：去看配置（导航条目为空 / 批量删除开关关着），或者 `fetchNavigation` 拉失败了。
+
+对照启动时那条基线：注册是 `Y`、开栏后 `我们的` 掉到 `0 个`，就彻底坐实——蓝圈来自顶替它位置的原生图标，继续写 CSS 没用。
+
+### 3.8.8 插件自己抛错时，不许把整页带白
+
+插件注册的组件（`TimeFormatController`、`HistoryGateController`、`ReadStatusController`、`BulkDeleteBar`、右侧栏 `ProductNavSidebar`、两个控制台面板、两个头部图标）都渲染在 Mattermost 自己的 React 树里。React 遇到未捕获的 throw 会**卸载整棵树**——这就是「白屏」：不是插件没显示出来，而是页面根本没渲染完。
+
+三道防线：
+
+1. **`withBoundary()`（错误边界）** —— 每个注册出去的组件都包一层 `ErrorBoundary`：抛错时记录并渲染 `null`（这些组件本来就不可见），页面其余部分照旧；
+2. **`installCrashReporter()`** —— 插件启动第一件事。监听 `error` / `unhandledrejection`，把前 5 条存进 `localStorage['customers-plugin:last-errors']`；
+3. **页面上的红色横幅** —— 错误**用原生 DOM 画**到页面顶部，不经过 React（React 树已经崩了，靠它渲染的东西也一起没了）。手机上没有控制台可读，白屏时这一条横幅就是唯一的线索，截图即可反馈。
+
+**横幅会过滤一种「良民」**（v0.6.29 起）：手机浏览器的**自动播放拒绝**——宿主应用收到新消息想播提示音，`play()` 的 Promise 被浏览器按策略拒绝，留下一条未捕获 rejection（报文含 `not allowed by the user agent`、栈里有 `play@native code`）。它不破坏任何功能，不是白屏原因；照旧静默存档，但**不画横幅**——横幅一旦为无关紧要的事响过一次，读者就再也不信它了。
+
+排查白屏时先看横幅；没有横幅，说明页面不是被异常打断的（那才是样式或数据的问题）。控制台里也能取：
+
+```js
+JSON.parse(localStorage.getItem('customers-plugin:last-errors') || '[]')
+```
+
+#### 第四道：DOM 兜底（v0.6.28，现场证据换来的一层）
+
+0.6.27 的横幅在真机上抓到了白屏本身：`The object can not be found here. removeChild`，堆栈落在 **react-dom 提交删除阶段** —— React 删除自己渲染的节点时，那个节点已经不在它以为的父节点里了。这是 DOM 所有权冲突，**错误边界够不到**（发生在 React 提交阶段），整棵树当场卸载。
+
+`installDomGuard()` 紧跟崩溃取证安装，把 `removeChild` / `insertBefore` 包上容忍层：**只有本来要抛的那一种情况**才走兜底（节点挪位→从实际位置删；已游离→按已删除处理；参照挪位→贴着参照点插），其余一律原样透传。每次介入静默记进 `localStorage`（不画横幅、2 秒节流），同一时刻连续介入只记一条。同时把历史提示条从 React 管理的 `#channel-header` 里搬出来，改成 `body` 下的 fixed 浮条——插件在 React 树里的结构性动作又少了一个。
 
 ---
 
@@ -686,7 +827,7 @@ NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
 NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
   node scripts/test-history-gate.js     # 历史隔离：整行塌陷 / 留白 / 同步时机 / 系统消息：53 项
 NODE_PATH="C:/Users/cheny/.workbuddy/binaries/node/workspace/node_modules" \
-  node scripts/test-product-nav.js      # 产品导航按钮与面板：82 项
+  node scripts/test-product-nav.js      # 产品导航：地址清洗 + 正文构建 + 列数/宽度 + 头部按钮外观锁定 + 注册写法：130 项
 
 # 类型与风格
 cd webapp && npm run check-types && npm run lint
@@ -785,7 +926,7 @@ MM-DD HH:mm               → 09-15 09:42
 2. `plugin.json` 的 `settings_schema.settings` 增加对应项；
 3. 若前端需要，扩展 `server/api.go` 的 `publicConfig`；
 4. webapp 侧在 `webapp/src/index.tsx` 里再注册一个组件，例如：
-   - `registry.registerRootComponent(...)`：挂一个不可见组件，用 MutationObserver 改 DOM（时间、历史隔离、已读标记、产品导航四个功能都这么干）
+   - `registry.registerRootComponent(...)`：挂一个不可见组件，用 MutationObserver 改 DOM（时间、历史隔离、已读标记、批量删除工具条、合并时间浮框都这么干）
    - `registry.registerChannelHeaderButtonAction(...)`：频道头部加按钮（回调**无参数**，跨组件通信要用模块级 store）
    - `registry.registerAdminConsoleCustomSetting(key, Component)`：控制台设置项换成自定义 React 组件
    - `registry.registerPostDropdownMenuAction(...)`：消息右键菜单加项
@@ -814,6 +955,7 @@ MM-DD HH:mm               → 09-15 09:42
 | 切换频道时聊天区一片空白，要滚一下才正常 | 同上（`itemSizeMap` 里存了被隐藏行的残留高度）。升级到 0.6.4：**隐藏必须作用在 `.item_measurer` 整行上** |
 | 上下滚动时消息不显示、来回滚动才出来 | 同上：行滚出视口后变成「按缓存高度撑开的占位 div」，那一刻 DOM 里根本没有 `#post_xxx` 可供隐藏，只能靠整行塌陷 + size observer 纠正 |
 | 产品导航一个分类里一行只排得下 2 个链接 | 见 3.8.5。原来是 `flex-wrap` + 写死 88px 瓦片，300px 面板只放得下 2 个。0.6.9 起改成 grid，0.6.10 起每行个数由设置项 `ProductNavLinksPerRow`（1–12，默认 5）控制 |
+| 手机浏览器打开是白屏 | 见 3.8.8。0.6.27 起屏幕顶部会出现红色横幅（截图即可反馈）；0.6.28 起横幅抓到的那类崩溃（React 提交阶段 `removeChild` 抛 NotFoundError）已由 DOM 兜底直接拦下，插件组件也都包了错误边界——若升级后仍白屏且没有横幅，那不是异常打断，按样式/数据方向查 |
 | 滚到频道最顶部时加入后的消息不见了 | 见 3.5.9。0.6.6 起：① 隐藏规则从 `display:none` 改成强制 0 高（保留盒子，共享 ResizeObserver 才会上报塌陷后的 0）；② 停在顶部且第一条可见消息不在视口里时自动把它拉回视野。0.6.7 起：③ 只要视口里没有可见消息就归位（带 800ms 手势静默）。0.6.8 起数据层过滤（见 3.5.11），历史消息根本不会被渲染 |
 | 强制刷新正常、普通刷新或切回频道就失效 | 见 3.5.10。0.6.7 起边界会镜像到 `localStorage` 并在首帧前读回 + 后台重新校验；0.6.8 起数据层过滤彻底消除时序竞态（见 3.5.11） |
 | 消息行是空白的、不显示内容 | 该频道的边界还没取回来，正在留白。通常是 `POST /api/v1/history/boundaries` 失败（见上面的 404/401）或服务端算边界报错，看服务端日志 |
@@ -829,14 +971,17 @@ MM-DD HH:mm               → 09-15 09:42
 | 频道头没有批量删除按钮 | 按钮只在 `BulkDeleteEnabled` 为 **true** 时注册（否则点了也会被 403）。改完设置要保存并 Ctrl+F5 |
 | 批量删除接口返回 403 | ① `BulkDeleteEnabled` 是否开启；② 删除别人的消息需要 `delete_others_posts`（系统管理员或有该权限的频道管理员）；③ 响应里的 `denied` 会告诉你有多少条因为无权限被跳过 |
 | 预览条数是 0 | 检查 `channelId` 是否选对、时间范围是否用本地时间（面板里填的是本地时间，会转成毫秒时间戳）、关键词大小写不敏感但必须是消息正文的子串 |
-| 右上角没有产品导航按钮 | ① `ProductNavEnabled` 是否为 true；② **必须至少配置一条链接**（没有条目时按钮会主动隐藏）；③ 改完设置要保存并 Ctrl+F5；④ 看控制台 `/api/v1/navigation` 是否返回了非空的 `categories` |
-| 导航保存后用户端没变化 | 用户端要刷新页面才会重新拉 `/api/v1/navigation`；按钮与面板是插件启动后注入的，上传新版本后同样要 Ctrl+F5 |
+| 频道头部没有产品导航按钮 | ① `ProductNavEnabled` 是否为 true；② **必须至少配置一条链接**（没有条目时按钮根本不注册）；③ 改完设置要保存并 Ctrl+F5；④ 看控制台 `/api/v1/navigation` 是否返回了非空的 `categories` |
+| 点开导航后，批量删除按钮像被点亮了 | 见 3.8.7：开栏会让频道头部重渲染，按钮是那一次才进的 DOM，鼠标原位正好落在它上面，它自己的 hover 就是那圈蓝。v0.6.24 起已把该按钮的 hover/focus/按下态压回原样（导航按钮照旧保留自己的高亮）；v0.6.26 起按钮**一进 DOM 就自动补钉**，不用等某个固定时刻。仍复现时先**点一次产品导航**再看控制台有没有 `[customers-plugin] 头部按钮 补钉没认出来…` 那一行：有，说明按钮没认出来——连同后面那句 `头部长这样:` 那个无名 `0x0` 空壳一起看，那就是图标没渲染出来；没有，说明已经钉上了，那圈蓝不是背景/描边/阴影/边框画的，再敲 `customersPluginDiag('点开导航后')` 看 `已钉(全)` 那一段的真实计算值 |
+| 点了按钮右侧栏没出现 / 出现的是空的 | 见 3.8.4。右侧栏是 Mattermost 的：① 打开回复串或搜索会占用同一列（它们优先）；② 栏位里只有「暂无产品导航」说明条目为空，回到控制台确认至少一条链接通过了校验；③ 0.6.11 之前的版本是自建下拉面板，升级后需 Ctrl+F5 拿新 bundle |
+| 导航保存后用户端没变化 | 栏目里「打开时重新拉一次」，所以**点开导航那一刻**就一定是最新条目，不必刷新页面；但按钮的「有没有条目」是插件启动时判的，第一次上传新版本后仍要 Ctrl+F5 |
 | 某条链接保存后消失了 | 服务端只保留能渲染的条目：地址为空、地址不是 http(s)/站点相对路径、或名称为空的链接会被丢弃。检查地址是否写成了 `example.com`（缺 `https://`） |
 | 链接的 logo 不显示 | logo 用的是外部图片地址，用户浏览器必须能访问到它；加载失败会自动回退成名称首字的色块 |
 | 导航面板保存报 400 | 文档超过 32 KB（30 个分类 × 每类 50 条链接的上限之内不该发生），或请求体不是合法 JSON。面板会把服务端返回的原文一并显示出来 |
 | 导航面板保存报 401 | 登录会话失效，刷新页面重新登录再保存 |
 | 导航面板保存报 403 | 当前账号没有 `manage_system` 权限。只有系统管理员能改产品导航；读（`GET`）所有人都可以 |
 | 导航面板保存报 404 | 服务端没有 `/api/v1/navigation`。通常是插件没升级到 0.6.x，或升级后没有重新启用 —— 系统控制台 → 插件 → 找到本插件 → **禁用再启用** |
+| 点按钮报 `Minified React error #130 ... got: object` | 注册右侧栏时把「元素」当成了「组件类型」。0.6.11 的 `index.tsx` 写的是 `registerRightHandSidebarComponent(<ProductNavSidebar/>, ...)`，Mattermost 存下后又 `createElement()` 一次，元素当类型用即报错；0.6.12 起改为传组件本身（`ProductNavSidebar`）。升级到 0.6.12 并 Ctrl+F5 |
 | 导航面板保存报 405 | 请求方法被拦。服务端同时接受 `POST` 与 `PUT`，若仍报 405 说明是站点前面的**反向代理只允许 GET/POST**，检查代理配置 |
 | 导航面板加载失败、保存按钮置灰 | `GET /api/v1/navigation` 没成功，此时保存一定会失败，所以直接禁用。点「重新加载」重试；若仍失败按上面的 404 处理 |
 | 保存后控制台报 `Cannot read properties of null (reading 'map')` | 旧版本（0.6.0/0.6.1）的服务端会把「链接被全部丢弃的分类」写成 `"links": null`。升到 **0.6.2** 即可；原理见 3.8.5 |

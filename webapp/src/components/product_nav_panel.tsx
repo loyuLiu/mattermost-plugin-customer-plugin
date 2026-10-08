@@ -165,11 +165,11 @@ const ProductNavPanel = () => {
     return (
         <div>
             <p>
-                {'在此维护右上角「产品导航」按钮里的分类与网站链接。每个分类可添加多个链接，链接的 logo 填图片 URL（留空则显示名称首字）。保存后用户端刷新页面即可看到。'}
+                {'在此维护「产品导航」的分类与网站链接。用户点右上角的按钮，导航就显示在 Mattermost 自己的右侧栏里。每个分类可添加多个链接，链接的 logo 填图片 URL（留空则显示名称首字）。保存后用户端刷新页面即可看到。'}
             </p>
 
             <p style={{color: 'rgba(var(--center-channel-color-rgb,63,67,80),0.75)'}}>
-                {`当前每个分类一行显示 ${settings.linksPerRow ?? DEFAULT_PRODUCT_NAV_LINKS_PER_ROW} 个链接，可在上方「每行显示的链接数」中修改（1–12，面板宽度会自动跟着调整）。`}
+                {`当前每个分类一行显示 ${settings.linksPerRow ?? DEFAULT_PRODUCT_NAV_LINKS_PER_ROW} 个链接，可在上方「每行显示的链接数」中修改（1–12，栏位宽度会自动跟着调整）。`}
             </p>
 
             {!settings.enabled && (
