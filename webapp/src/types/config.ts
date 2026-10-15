@@ -78,6 +78,12 @@ export type ServerConfig = {
     /** Absent when talking to an older build of the plugin server. */
     history?: HistorySettings;
 
+    /**
+     * Whether the error banner may be painted on the page (diagnostics only).
+     * Absent on older servers, and false by default.
+     */
+    crashBanner?: boolean;
+
     /** Absent when talking to an older build of the plugin server. */
     groupedTime?: GroupedTimeSettings;
 

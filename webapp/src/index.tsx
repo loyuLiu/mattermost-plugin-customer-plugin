@@ -22,6 +22,7 @@ import UserTimeZoneSetting from './components/user_timezone_setting';
 import {
     PLUGIN_ID,
     BULK_DELETE_TOOLTIP,
+    BULK_DELETE_TOOLTIP_ALT,
     PRODUCT_NAV_TITLE,
     SETTING_CUSTOM_FORMAT,
     SETTING_TIME_SOURCE,
@@ -31,7 +32,7 @@ import {
     TIME_SOURCE_SYSTEM,
 } from './constants';
 import ErrorBoundary from './components/error_boundary';
-import {installCrashReporter, recordCrash} from './crash_report';
+import {installCrashReporter, recordCrash, setCrashBannerEnabled} from './crash_report';
 import {installDomGuard} from './dom_guard';
 import {fetchServerConfig, getCachedServerConfig, primeServerConfig} from './hooks';
 import {installPostStreamFilter} from './post_stream_filter';
@@ -157,6 +158,13 @@ export default class Plugin {
         }
         primeServerConfig(config);
 
+        // The banner is off unless the administrator asked for it. Errors are recorded
+        // either way, so nothing is lost by keeping the page clean; the switch is at
+        // System Console → Plugins → Customers Plugin → 页面崩溃提示横幅, and
+        // `localStorage.setItem('customers-plugin:crash-banner', 'on')` turns it on
+        // for one debugging session without touching the settings.
+        setCrashBannerEnabled(Boolean(config?.crashBanner));
+
         registry.registerRootComponent(withBoundary(TimeFormatController));
 
         // Second feature: keep channel history away from members that joined later.
@@ -260,7 +268,7 @@ export default class Plugin {
                 </ErrorBoundary>,
                 () => setBulkSelectActive(true),
                 BULK_DELETE_TOOLTIP,
-                '勾选消息并批量删除',
+                BULK_DELETE_TOOLTIP_ALT,
             );
         }
 

@@ -80,6 +80,8 @@ const {
     noteHeaderRegistration,
     exposeHeaderDiagnostic,
     shouldLogHeaderDiag,
+    headerQuietStyleText,
+    HEADER_BUTTON_LABELS,
 } = require(path.join(OUT, 'product_nav.js'));
 
 const {
@@ -93,6 +95,7 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>', {url: 'http:/
 
 global.window = dom.window;
 global.document = dom.window.document;
+global.localStorage = dom.window.localStorage;
 
 const document = dom.window.document;
 
@@ -401,6 +404,116 @@ function css() {
     ok(new RegExp('#' + navBtn.id + ' \\*\\{outline:none!important').test(quietCss),
         '按钮内部的后代（svg 图标）同样不许画描边/阴影/滤镜');
     ok(!/:hover\{background-color:rgba\(/.test(quietCss), '不再有单独的 hover 规则（重排落到邻居上也不会亮）');
+
+    // —— v0.6.30 定案的那一条：选择器列表以尾逗号结尾 = 整条规则被浏览器丢弃。
+    // 导航段当初就是这样产出的，所以「导航按钮的基础态压制」从来没生效过；
+    // 测试只做字符串包含断言，这个形状被完整掩盖了十几个版本。
+    ok(quietCss.indexOf(',{') < 0 && quietCss.indexOf(', {') < 0,
+        'CSS 里没有 ",{" 这种非法形状（尾逗号会让浏览器把整条规则丢掉）');
+    ok(navRule[navRule.length - 1] !== ',' && bulkRule[bulkRule.length - 1] !== ',',
+        '两段规则的选择器列表都不以逗号结尾');
+    ok(navRule.indexOf(':focus-within') >= 0 && bulkRule.indexOf(':focus-within') >= 0,
+        '焦点落进图标内部时按钮也不许亮（:focus-within）');
+
+    const descOf = (id) => {
+        const m = quietCss.match(new RegExp('#' + id + ' \\*\\{([^}]*)\\}'));
+        return m ? m[1] : '';
+    };
+    ok(/color:inherit/.test(descOf(bulkBtn.id)) && /background:none/.test(descOf(bulkBtn.id)),
+        '删除按钮连内部图标的颜色/背景一起压（图标用 currentColor：只压描边、图标照样变蓝）');
+    ok(!/color:inherit/.test(descOf(navBtn.id)),
+        '导航按钮不压内部颜色（它要保留自己的高亮配色）');
+    ok(HEADER_BUTTON_LABELS.indexOf('勾选消息并批量删除') >= 0,
+        '标签兜底认「勾选消息并批量删除」这个说法（注册处就用的它，之前只有「批量删除消息」，兜底恒失效）');
+
+    // 按图标标记的兜底：id 是每次注册随机生成的，插件重载后按 id 写的规则全部落空。
+    global.CSS = {supports: (q) => q.indexOf(':has') >= 0};
+    installHeaderButtonQuietStyle([
+        {domId: navBtn.id, quiet: false},
+        {domId: bulkBtn.id, quiet: true},
+    ]);
+    const withHas = document.getElementById(QUIET_ID).textContent;
+    ok(withHas.indexOf(':has([data-cp-glyph="bulk-delete"])') >= 0 &&
+        withHas.indexOf(':has([data-cp-glyph="product-nav"])') >= 0,
+        '另写一套按图标标记的兜底规则（与 id 无关：重载后 id 全换也照样生效）');
+    const mixedRule = withHas.split('}').filter((r) => r.indexOf(':has(') >= 0 && r.indexOf('#' + navBtn.id) >= 0);
+    ok(mixedRule.length === 0,
+        '兜底规则独立成条，不与 id 选择器混在一个列表里（不支持的选择器会废掉同列表的整条规则）');
+    ok(withHas.indexOf('#' + bulkBtn.id) >= 0, 'id 规则照旧保留，两套并存互不依赖');
+
+    // —— v0.6.31：应用栏（app-bar）渲染。Mattermost 的 AppBarPluginComponent 按
+    // **插件 id** 算激活态（component.pluginId === activeRhsComponent?.pluginId），
+    // 两个按钮同属一个插件 → 点开导航两个包装 div 同时被加 --active（蓝圈）；
+    // 且两个包装共用同一个 id（app-bar-icon-<pluginId>），按 id 区分根本不可能。
+    ok(withHas.indexOf('.app-bar .app-bar__icon:has([data-cp-glyph="bulk-delete"])') >= 0,
+        '应用栏渲染有一套自己的压制规则（按钮不在频道头部，channel-header 规则够不着）');
+    ok(/app-bar__icon--active [^,{]*app-bar__icon-inner[^{]*\{box-shadow:none!important/.test(withHas),
+        '应用栏的 --active 蓝圈（inner 上的 box-shadow）被压掉');
+    ok(/app-bar__icon--active::before\{content:none!important/.test(withHas),
+        '应用栏的激活小竖条（包装 div 的 ::before）也压掉');
+    ok(/app-bar__old-icon\{color:rgba\(var\(--sidebar-text-rgb\),0\.64\)!important/.test(withHas),
+        '删除按钮在应用栏的颜色被钉回静息值（图标用 currentColor，不钉颜色照样变蓝）');
+
+    // 应用栏场景演练：两个包装共用一个 id，可点的是无 id 的 div[role=button]。
+    const appBar = document.createElement('div');
+    appBar.className = 'app-bar';
+    const sharedId = 'app-bar-icon-com.example.customers-plugin';
+    const makeAppBarButton = (glyph) => {
+        const wrapper = document.createElement('div');
+        wrapper.id = sharedId;
+        wrapper.className = 'app-bar__icon';
+        const inner = document.createElement('div');
+        inner.setAttribute('role', 'button');
+        inner.className = 'app-bar__old-icon app-bar__icon-inner';
+        const icon = document.createElement('img');
+        icon.setAttribute('data-cp-glyph', glyph);
+        inner.appendChild(icon);
+        wrapper.appendChild(inner);
+        return wrapper;
+    };
+    appBar.appendChild(makeAppBarButton('product-nav'));
+    appBar.appendChild(makeAppBarButton('bulk-delete'));
+    document.body.appendChild(appBar);
+    global.CSS = {supports: (q) => q.indexOf(':has') >= 0};
+    syncHeaderButtonQuietStyle();
+    const appBarCss = document.getElementById(QUIET_ID).textContent;
+    ok(appBarCss.indexOf(`#${sharedId}`) < 0 && appBarCss.indexOf(`[id="${sharedId}"]`) < 0,
+        '不会按应用栏的共享 id 写规则（写了会把两个按钮一起压掉，导航的高亮也没了）');
+    ok(appBarCss.indexOf('.app-bar .app-bar__icon:has([data-cp-glyph="bulk-delete"])') >= 0,
+        '应用栏里的按钮仍由图标标记规则接管（发现不到 id 也有规则在）');
+    appBar.remove();
+    delete global.CSS;
+
+    global.CSS = {supports: () => false};
+    installHeaderButtonQuietStyle([{domId: bulkBtn.id, quiet: true}]);
+    ok(document.getElementById(QUIET_ID).textContent.indexOf(':has') < 0,
+        '浏览器不支持 :has 时就不产出（不拿一整张表去赌）');
+    delete global.CSS;
+
+    installHeaderButtonQuietStyle([
+        {domId: navBtn.id, quiet: false},
+        {domId: bulkBtn.id, quiet: true},
+    ]);
+    ok(headerQuietStyleText() === document.getElementById(QUIET_ID).textContent,
+        '样式表的实际文本能取出来（钉上了还亮时，一眼看出圈是哪个属性画的）');
+
+    // jsdom 的 CSS 解析器太宽容（非法规则照样计数），但它的选择器引擎会拒绝尾逗号，
+    // 和真实浏览器一个态度 —— 拿它当验收人，比字符串断言硬。
+    const plain = document.getElementById(QUIET_ID).textContent;
+    const parses = (list) => {
+        try {
+            document.querySelector(list);
+            return true;
+        } catch {
+            return false;
+        }
+    };
+    const lists = plain
+        .split('}')
+        .filter((r) => r.indexOf('{') > 0)
+        .map((r) => r.slice(0, r.indexOf('{')));
+    ok(lists.length >= 2 && lists.every(parses),
+        '每条规则的选择器列表都真的能被解析（这条断言就是为尾逗号准备的：当年它会整条作废）');
 
     // 面板 CN：数字开头的 id 不能写成 #1abc...，要降级成属性选择器。
     const numericBtn = document.createElement('button');
@@ -788,6 +901,21 @@ function css() {
 
         crash.installCrashReporter();
         crash.installCrashReporter(); // 装两遍也只记一条
+
+        // v0.6.33：横幅默认关（它盖在每个页面顶部、对所有人都可见），这里打开它才谈得上取证。
+        crash.recordCrash(new Error('quiet-boom'), 'test');
+        ok(!document.getElementById('customers-plugin-crash-banner'),
+            '默认不画横幅（关掉之后，页面上不再出现这条提示）');
+        ok(crash.getCrashRecords().length === 1, '不画横幅也照样记录（存档还在，事后能查）');
+
+        crash.setCrashBannerEnabled(true);
+        ok(Boolean(document.getElementById('customers-plugin-crash-banner')),
+            '管理员打开开关后，之前记录的那条也会补画出来（启动早期那几毫秒的错才是解释白屏的）');
+        crash.resetCrashRecords();
+        crash.uninstallCrashReporter();
+        crash.installCrashReporter();
+        crash.setCrashBannerEnabled(true);
+
         crash.recordCrash(new Error('boom'), 'test');
 
         const records = crash.getCrashRecords();
@@ -803,6 +931,60 @@ function css() {
             crash.recordCrash(new Error('more-' + i), 'test');
         }
         ok(crash.getCrashRecords().length === 5, '最多留 5 条（第一屏那几条才是解释白屏的）');
+
+        // —— v0.6.32：横幅只该为「我们自己的错」响。宿主（Mattermost）自己崩了，
+        // 我们只是听见了（这个上报器监听整个 window），不能把锅扣在插件头上。
+        crash.uninstallCrashReporter();
+        crash.resetCrashRecords();
+        crash.installCrashReporter();
+
+        const hostError = new Error("Cannot read properties of undefined (reading 'collapsed')");
+        hostError.stack = 'TypeError: ' + hostError.message + '\n' +
+            '    at byId (https://host/static/6240.9e07f8088ac707cb90ef.js:1:121138)\n' +
+            '    at Array.reduce (<anonymous>)';
+        crash.recordCrash(hostError, 'rejection');
+
+        const hostRecords = crash.getCrashRecords();
+        ok(hostRecords.length === 1 && hostRecords[0].origin === 'host',
+            '堆栈里没有我们自己的帧 → 记为宿主来源（我们只是听见了，不是我们抛的）');
+        ok(!document.getElementById('customers-plugin-crash-banner'),
+            '宿主自身的已知崩溃不画横幅（横幅为无关的事响过一次，就没人再信它）');
+
+        const ownError = new Error('own-boom');
+        ownError.stack = 'Error: own-boom\n' +
+            '    at x (https://host/plugins/com.example.customers-plugin/public/main.js:2:99)';
+        crash.recordCrash(ownError, 'test');
+        ok(crash.getCrashRecords()[1].origin === 'plugin', '带插件路径的堆栈记为插件来源');
+
+        const ownBanner = document.getElementById('customers-plugin-crash-banner');
+        ok(Boolean(ownBanner) && /own-boom/.test(ownBanner.textContent || ''), '自己的错照旧画横幅');
+        ok(Boolean(ownBanner) && /·宿主/.test(ownBanner.textContent || ''),
+            '横幅里标出哪一条是宿主的（读的人一眼分清谁该负责）');
+
+        // 只有宿主报错时，标题不许说成本插件的错。
+        crash.uninstallCrashReporter();
+        crash.resetCrashRecords();
+        crash.installCrashReporter();
+        const hostOther = new Error('The object can not be found here. removeChild');
+        hostOther.stack = 'NotFoundError: ' + hostOther.message + '\n' +
+            '    at removeChild (https://host/static/7954.2944798b99fd6a77c5c0.js:2:367975)';
+        crash.recordCrash(hostOther, 'error');
+        const titleEl = document.querySelector('#customers-plugin-crash-banner div');
+        ok(Boolean(titleEl) && /Mattermost 自身报错/.test(titleEl.textContent || ''),
+            '全是宿主报错时，标题写明是宿主自己的错（不扣给插件）');
+
+        // 开关本身：管理员关 → 当场收走；localStorage 覆盖 → 不换配置、不重装，自己一台机器就能取证。
+        crash.setCrashBannerEnabled(false);
+        ok(!document.getElementById('customers-plugin-crash-banner'), '管理员关掉开关，横幅当场收走');
+        crash.recordCrash(new Error('after-off'), 'test');
+        ok(crash.getCrashRecords().length > 0, '关掉后仍然记录（只是不画）');
+
+        window.localStorage.setItem('customers-plugin:crash-banner', 'on');
+        ok(crash.isCrashBannerEnabled(), 'localStorage 覆盖成 on：临时取证不必惊动配置');
+        crash.recordCrash(new Error('override-on'), 'test');
+        ok(Boolean(document.getElementById('customers-plugin-crash-banner')), '覆盖打开后照旧画横幅');
+        window.localStorage.removeItem('customers-plugin:crash-banner');
+        ok(!crash.isCrashBannerEnabled(), '清掉覆盖后回到管理员设置（关）');
 
         crash.uninstallCrashReporter();
         crash.resetCrashRecords();

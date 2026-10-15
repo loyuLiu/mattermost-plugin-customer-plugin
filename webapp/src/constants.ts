@@ -48,6 +48,17 @@ export const PRODUCT_NAV_TITLE = '产品导航';
  */
 export const BULK_DELETE_TOOLTIP = '批量删除消息';
 
+/**
+ * The other string the bulk-delete button answers to.
+ *
+ * One of the two arguments `registerChannelHeaderButtonAction` takes is this longer
+ * sentence, and which of the two builds end up copying onto the button's `aria-label`
+ * is not something this plugin controls — several builds were seen carrying the other
+ * one. Recognising both costs nothing; recognising only one and being wrong means the
+ * button is never pinned at all.
+ */
+export const BULK_DELETE_TOOLTIP_ALT = '勾选消息并批量删除';
+
 /** Links shown on one row of a navigation category when the server says nothing. */
 export const DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = 5;
 

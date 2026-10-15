@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.preferenceKey = exports.MAX_PRODUCT_NAV_LINKS_PER_ROW = exports.MIN_PRODUCT_NAV_LINKS_PER_ROW = exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = exports.BULK_DELETE_TOOLTIP = exports.PRODUCT_NAV_TITLE = exports.DEFAULT_BULK_DELETE_MAX_POSTS = exports.DEFAULT_GROUPED_POSITION = exports.RESYNC_INTERVAL_MS = exports.SELECTOR_ALL_TIMES = exports.SELECTOR_POST_TIME = exports.DEFAULT_FORMAT = exports.SETTING_USER_TIMEZONE = exports.SETTING_CUSTOM_FORMAT = exports.SETTING_TIME_SOURCE = exports.TIME_SOURCE_OFF = exports.TIME_SOURCE_CUSTOM = exports.TIME_SOURCE_SYSTEM = exports.PREFERENCE_CATEGORY = exports.PLUGIN_ID = void 0;
+exports.preferenceKey = exports.MAX_PRODUCT_NAV_LINKS_PER_ROW = exports.MIN_PRODUCT_NAV_LINKS_PER_ROW = exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = exports.BULK_DELETE_TOOLTIP_ALT = exports.BULK_DELETE_TOOLTIP = exports.PRODUCT_NAV_TITLE = exports.DEFAULT_BULK_DELETE_MAX_POSTS = exports.DEFAULT_GROUPED_POSITION = exports.RESYNC_INTERVAL_MS = exports.SELECTOR_ALL_TIMES = exports.SELECTOR_POST_TIME = exports.DEFAULT_FORMAT = exports.SETTING_USER_TIMEZONE = exports.SETTING_CUSTOM_FORMAT = exports.SETTING_TIME_SOURCE = exports.TIME_SOURCE_OFF = exports.TIME_SOURCE_CUSTOM = exports.TIME_SOURCE_SYSTEM = exports.PREFERENCE_CATEGORY = exports.PLUGIN_ID = void 0;
 const manifest_1 = __importDefault(require("./manifest"));
 exports.PLUGIN_ID = manifest_1.default.id;
 /**
@@ -41,6 +41,16 @@ exports.PRODUCT_NAV_TITLE = '产品导航';
  * instead of by an identifier it cannot reliably derive.
  */
 exports.BULK_DELETE_TOOLTIP = '批量删除消息';
+/**
+ * The other string the bulk-delete button answers to.
+ *
+ * One of the two arguments `registerChannelHeaderButtonAction` takes is this longer
+ * sentence, and which of the two builds end up copying onto the button's `aria-label`
+ * is not something this plugin controls — several builds were seen carrying the other
+ * one. Recognising both costs nothing; recognising only one and being wrong means the
+ * button is never pinned at all.
+ */
+exports.BULK_DELETE_TOOLTIP_ALT = '勾选消息并批量删除';
 /** Links shown on one row of a navigation category when the server says nothing. */
 exports.DEFAULT_PRODUCT_NAV_LINKS_PER_ROW = 5;
 /** Smallest and largest row size the administrator may ask for. */

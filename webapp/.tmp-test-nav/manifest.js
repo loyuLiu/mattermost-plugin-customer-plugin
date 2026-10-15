@@ -9,7 +9,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/example/mattermost-plugin-customers",
     "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.6.28",
+    "version": "0.6.33",
     "min_server_version": "10.0.0",
     "server": {
         "executables": {
@@ -331,6 +331,16 @@ const manifest = JSON.parse(`
                 "display_name": "系统管理员不受限制",
                 "type": "bool",
                 "help_text": "开启后，拥有「管理服务器」权限的用户仍可看到完整历史，便于排障。",
+                "placeholder": "",
+                "default": false,
+                "hosting": "",
+                "secret": false
+            },
+            {
+                "key": "CrashBannerEnabled",
+                "display_name": "页面崩溃提示横幅（排查用）",
+                "type": "bool",
+                "help_text": "开启后，插件捕获到的未捕获错误/未处理 Promise 拒绝会在页面顶部画一条红色横幅，用于排查白屏（手机浏览器没有控制台时尤其有用）。默认关闭：横幅会盖在每个页面顶部、对所有人都可见，属于排查工具而非常驻功能。关闭时错误仍然记录，可在浏览器控制台执行 JSON.parse(localStorage.getItem('customers-plugin:last-errors') || '[]') 读取；临时只对自己打开则执行 localStorage.setItem('customers-plugin:crash-banner','on') 后刷新。",
                 "placeholder": "",
                 "default": false,
                 "hosting": "",

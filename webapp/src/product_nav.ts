@@ -3,6 +3,7 @@
 
 import {
     BULK_DELETE_TOOLTIP,
+    BULK_DELETE_TOOLTIP_ALT,
     DEFAULT_PRODUCT_NAV_LINKS_PER_ROW,
     MAX_PRODUCT_NAV_LINKS_PER_ROW,
     MIN_PRODUCT_NAV_LINKS_PER_ROW,
@@ -417,6 +418,26 @@ const BUTTON_QUIET_PROPS =
     'filter:none!important;';
 
 /**
+ * What the icon inside the button may not paint of its own.
+ *
+ * Both icons are drawn with `stroke='currentColor'`, so a rule anywhere upstream that
+ * recolours the button's text recolours the glyph with it — and a blue trash can reads
+ * as "switched on" just as a ring around it does. `color:inherit` is what stops that,
+ * and it is why the icon rules have to name the colour rather than only the ring.
+ */
+const BUTTON_QUIET_DESC_PROPS =
+    'outline:none!important;' +
+    'box-shadow:none!important;' +
+    'filter:none!important;';
+
+/** The same, plus every way an icon could carry a colour or a shape of its own. */
+const BUTTON_QUIET_DESC_PROPS_FULL =
+    'background:none!important;' +
+    'border:none!important;' +
+    'color:inherit!important;' +
+    BUTTON_QUIET_DESC_PROPS;
+
+/**
  * Selector for one button, from its real DOM id.
  *
  * A hexadecimal identifier can begin with a digit, and `#1abc…` is not a valid
@@ -450,34 +471,147 @@ function describesSameButton(domId: string, other: string): boolean {
  */
 function buttonQuietRules(domId: string, everyState: boolean): string {
     const sel = buttonSelector(domId);
+    const states = [
+        sel,
+        `${sel}:focus`,
+        `${sel}:focus-visible`,
+        `${sel}:active`,
+        // The icon can take the focus while the button keeps the ring: `:focus-within`
+        // is the one state that lights a button whose child was focused.
+        `${sel}:focus-within`,
+        `${sel}.${BUTTON_CLASS}--active`,
+    ];
 
-    const states =
-        `${sel},` +
-        `${sel}:focus,` +
-        `${sel}:focus-visible,` +
-        `${sel}:active,` +
-        `${sel}.${BUTTON_CLASS}--active,`;
+    // Nothing decorative the active modifier could paint with a pseudo-element.
+    const pseudo = `${sel}.${BUTTON_CLASS}--active::before,${sel}.${BUTTON_CLASS}--active::after{content:none!important;}` +
+        `${sel}::before,${sel}::after{content:none!important;}`;
 
+    // The navigation button keeps Mattermost's hover. It is the one highlight the
+    // report asked to keep, and its `:hover` is what makes the click feel answered.
     if (!everyState) {
-        // The navigation button keeps Mattermost's hover. It is the one highlight the
-        // report asked to keep, and its `:hover` is what makes the click feel answered.
-        return `${states}{${BUTTON_QUIET_PROPS}}` +
-            `${sel}::before,${sel}::after{content:none!important;}` +
-            `${sel} *{outline:none!important;box-shadow:none!important;filter:none!important;}`;
+        return `${states.join(',')}{${BUTTON_QUIET_PROPS}}` +
+            pseudo +
+            `${sel} *{${BUTTON_QUIET_DESC_PROPS}}`;
     }
 
-    const every =
-        `${states}` +
-        `${sel}:hover,` +
-        `${sel}:hover:focus,` +
-        `${sel}.${BUTTON_CLASS}:hover:focus`;
+    states.push(`${sel}:hover`, `${sel}:hover:focus`, `${sel}.${BUTTON_CLASS}:hover:focus`);
 
-    return `${every}{${BUTTON_QUIET_PROPS}}` +
-        // Nothing decorative the active modifier could paint with a pseudo-element,
-        // and nothing its icon or a descendant could paint with a shadow of its own.
-        `${sel}.${BUTTON_CLASS}--active::before,${sel}.${BUTTON_CLASS}--active::after{content:none!important;}` +
+    return `${states.join(',')}{${BUTTON_QUIET_PROPS}}` +
+        pseudo +
+        `${sel} *{${BUTTON_QUIET_DESC_PROPS_FULL}}`;
+}
+
+/**
+ * Whether `:has()` is usable here.
+ *
+ * An unsupported selector does not fail quietly — CSS throws the whole rule the
+ * unsupported selector appears in away, exactly as the trailing comma below once did
+ * to a whole block of these. So it is asked before it is written, and its rules are
+ * kept apart from the id rules that must survive without it.
+ */
+function hasSelectorSupported(): boolean {
+    const css = typeof CSS === 'undefined' ?
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (typeof globalThis === 'undefined' ? null : (globalThis as any).CSS) :
+        CSS;
+
+    return Boolean(css && typeof css.supports === 'function' && css.supports('selector(:has(*))'));
+}
+
+/**
+ * The same quieting, keyed by the marker on the icon instead of by the button's id.
+ *
+ * The id is generated per registration: disable and enable the plugin, or let Mattermost
+ * reload it, and every rule written against the old id describes a button that is no
+ * longer on the page. The marker is the one part of the button this plugin renders
+ * itself, so it survives every registration, and it needs no discovery to have
+ * succeeded first. Both keys are written; either alone is enough.
+ */
+function glyphQuietRules(everyState: boolean): string {
+    if (!hasSelectorSupported()) {
+        return '';
+    }
+
+    const sel = `button.${BUTTON_CLASS}:has([data-cp-glyph="${everyState ? HEADER_GLYPH_BULK : HEADER_GLYPH_NAV}"])`;
+    const states = [
+        sel,
+        `${sel}:focus`,
+        `${sel}:focus-visible`,
+        `${sel}:active`,
+        `${sel}:focus-within`,
+        `${sel}.${BUTTON_CLASS}--active`,
+    ];
+
+    if (everyState) {
+        states.push(`${sel}:hover`, `${sel}:hover:focus`, `${sel}:hover:focus-visible`);
+    }
+
+    const desc = everyState ? BUTTON_QUIET_DESC_PROPS_FULL : BUTTON_QUIET_DESC_PROPS;
+
+    return `${states.join(',')}{${BUTTON_QUIET_PROPS}}` +
         `${sel}::before,${sel}::after{content:none!important;}` +
-        `${sel} *{outline:none!important;box-shadow:none!important;filter:none!important;}`;
+        `${sel} *{${desc}}`;
+}
+
+/**
+ * The same quieting for the application-bar rendering, where the channel-header
+ * rules cannot reach.
+ *
+ * When Mattermost shows the app bar (the vertical icon strip beside the channel),
+ * `registerChannelHeaderButtonAction` buttons are rendered there instead of in the
+ * channel header, as `div[role=button].app-bar__icon-inner` inside
+ * `div.app-bar__icon` — never as `button.channel-header__icon`, so every rule above
+ * matches nothing. Two facts of that rendering make it worse:
+ *
+ * - the active state is keyed by **plugin id**, not per button:
+ *   `AppBarPluginComponent` computes `component.pluginId === activeRhsComponent?.pluginId`,
+ *   and both of this plugin's buttons share one plugin id — opening the navigation
+ *   puts `app-bar__icon--active` on **both** wrappers at once, which is exactly the
+ *   reported "clicking the navigation lights up the trash can";
+ * - both wrappers also share one DOM id (`app-bar-icon-<pluginId>`), so there is no
+ *   per-button handle here at all — the glyph marker is the only thing that can
+ *   tell the two apart.
+ *
+ * The trash can's every visual response is silenced by marker; the navigation button
+ * keeps the native active ring, which is the one highlight the report asked to keep.
+ * Each declaration group is its own rule: one unsupported selector must not bury the
+ * rest (the trailing-comma lesson, again).
+ */
+function appBarQuietRules(): string {
+    if (!hasSelectorSupported()) {
+        return '';
+    }
+
+    const wrap = `.app-bar .app-bar__icon:has([data-cp-glyph="${HEADER_GLYPH_BULK}"])`;
+    const innerBox = '.app-bar__icon-inner';
+    const inner = `${wrap} ${innerBox}`;
+
+    return (
+        // The ring. Rest, hover, and the active one — the `--active` class sits on the
+        // wrapper, but the shadow is painted on the inner box in every case, so
+        // silencing the inner box covers all three at once.
+        `${inner},${inner}:hover{box-shadow:none!important;}` +
+        `${wrap}.app-bar__icon--active ${innerBox},` +
+        `${wrap}.app-bar__icon--active ${innerBox}:hover{box-shadow:none!important;}` +
+        // The 3px active bar is painted on the wrapper's own ::before.
+        `${wrap}.app-bar__icon--active::before{content:none!important;}` +
+        // The old-icon branch recolours on hover and active, and the glyph is drawn
+        // with `stroke="currentColor"` — pin the colour to its resting value.
+        `${wrap} .app-bar__old-icon{color:rgba(var(--sidebar-text-rgb),0.64)!important;}` +
+        // Keyboard focus lands on the role=button div, not the wrapper.
+        `${wrap} [role="button"]:focus,${wrap} [role="button"]:focus-visible{outline:none!important;}`
+    );
+}
+
+/** How many of this plugin's glyph-marked icons the app bar currently holds. */
+function appBarGlyphCount(): number {
+    if (typeof document === 'undefined') {
+        return 0;
+    }
+
+    return document.querySelectorAll(
+        `.app-bar [data-cp-glyph="${HEADER_GLYPH_NAV}"],.app-bar [data-cp-glyph="${HEADER_GLYPH_BULK}"]`,
+    ).length;
 }
 
 /**
@@ -488,7 +622,7 @@ function buttonQuietRules(domId: string, everyState: boolean): string {
  * because that is the only reason they exist; `index.tsx` imports the same constants
  * to register with.
  */
-export const HEADER_BUTTON_LABELS = [PRODUCT_NAV_TITLE, BULK_DELETE_TOOLTIP] as const;
+export const HEADER_BUTTON_LABELS = [PRODUCT_NAV_TITLE, BULK_DELETE_TOOLTIP, BULK_DELETE_TOOLTIP_ALT] as const;
 
 /**
  * The marker this plugin's own header icons carry, as `data-cp-glyph` on the glyph.
@@ -692,6 +826,13 @@ const BASELINE_PROBE_MS = [0, 300, 700, 1200, 2000];
 const discoveredIds = new Set<string>();
 
 /**
+ * What was last written into the quieting sheet, for the diagnostic reading.
+ *
+ * Set by `installHeaderButtonQuietStyle`; empty until there has been something to pin.
+ */
+let installedSheetSummary = '';
+
+/**
  * The two appearances these buttons are pinned to.
  *
  * The trash can is the one that has to stop replying to the pointer: opening the
@@ -867,7 +1008,11 @@ export function syncHeaderButtonQuietStyle(attempt = 0): void {
     found.forEach(remember);
 
     const ids = Array.from(discoveredIds).sort();
-    const key = ids.map((domId) => `${domId}:${quietAllIds.has(domId) ? '全' : '基'}`).join(',');
+    // The glyph rules are part of the sheet even when no id has been discovered, and
+    // whether they go out depends on `:has` support — so that is part of the key too,
+    // or the first sync (no ids yet) would see an unchanged key and write nothing.
+    const key = `${hasSelectorSupported() ? 'has' : 'no'}|` +
+        ids.map((domId) => `${domId}:${quietAllIds.has(domId) ? '全' : '基'}`).join(',');
     if (key !== installedKey) {
         installedKey = key;
         installHeaderButtonQuietStyle(ids.map((domId) => ({
@@ -882,19 +1027,32 @@ export function syncHeaderButtonQuietStyle(attempt = 0): void {
             navSidebarHasOpened() &&
             typeof window !== 'undefined' &&
             typeof window.getComputedStyle !== 'undefined') {
-        // Only now: after the sidebar, so after the click that re-rendered the header.
-        // Before it, a header with no buttons of ours in it is just `not yet`, and
-        // reporting that is what made the reading worthless.
         missedHeaderReported = true;
-        printHeaderReading(`补钉没认出来（第 ${attempt + 1} 次）`, true, false);
 
-        // The header itself, since this is what distinguishes "Mattermost rendered an
-        // empty shell" from "the marker never got into the bundle". A row in the list
-        // above can call a button `无标签`, which is where eight iterations went to
-        // guessing.
-        const root = headerRoot();
-        if (root) {
-            console.info(`头部长这样：${(root.outerHTML || '').slice(0, 360)}`);
+        // The app-bar rendering is the known way for "registered, in the DOM, and
+        // still none of them in `.channel-header`" to be true and harmless: the
+        // buttons live in `.app-bar` and carry no id of their own there. Saying the
+        // ordinary failure line for that would send the next debugging session down
+        // the channel-header path all over again.
+        const inAppBar = appBarGlyphCount();
+        if (inAppBar > 0) {
+            // eslint-disable-next-line no-console
+            console.info(`[customers-plugin] 插件按钮在应用栏（app-bar）渲染 ${inAppBar} 个：` +
+                '此模式两个按钮共用一个 id、无独立 id 可钉，外观由图标标记（:has）规则接管，属正常');
+        } else {
+            // Only now: after the sidebar, so after the click that re-rendered the header.
+            // Before it, a header with no buttons of ours in it is just `not yet`, and
+            // reporting that is what made the reading worthless.
+            printHeaderReading(`补钉没认出来（第 ${attempt + 1} 次）`, true, false);
+
+            // The header itself, since this is what distinguishes "Mattermost rendered an
+            // empty shell" from "the marker never got into the bundle". A row in the list
+            // above can call a button `无标签`, which is where eight iterations went to
+            // guessing.
+            const root = headerRoot();
+            if (root) {
+                console.info(`头部长这样：${(root.outerHTML || '').slice(0, 360)}`);
+            }
         }
     }
 
@@ -934,7 +1092,19 @@ export interface QuietTarget {
 }
 
 export function installHeaderButtonQuietStyle(targets: readonly QuietTarget[]): void {
-    if (typeof document === 'undefined' || !document.head || targets.length === 0) {
+    if (typeof document === 'undefined' || !document.head) {
+        return;
+    }
+
+    // The glyph-keyed rules need no discovery, so they go out even before any button
+    // has been found — and in the app-bar rendering there is nothing to discover by
+    // id at all: both wrappers share one id, so the id rules below cannot be written
+    // for them and the glyph rules are the whole answer there.
+    const glyph = hasSelectorSupported() ?
+        glyphQuietRules(false) + glyphQuietRules(true) + appBarQuietRules() :
+        '';
+
+    if (!glyph && targets.length === 0) {
         return;
     }
 
@@ -945,7 +1115,39 @@ export function installHeaderButtonQuietStyle(targets: readonly QuietTarget[]): 
         document.head.appendChild(style);
     }
 
-    style.textContent = targets.map((target) => buttonQuietRules(target.domId, target.quiet)).join('');
+    style.textContent = targets.map((target) => buttonQuietRules(target.domId, target.quiet)).join('') + glyph;
+
+    const all = targets.filter((target) => target.quiet).length;
+    installedSheetSummary = `${targets.length} 条(全${all}/基${targets.length - all}` +
+        `${glyph ? ' +has+bar' : ''})`;
+}
+
+/**
+ * What the quieting stylesheet is holding right now, for the diagnostic reading.
+ *
+ * "Found the button" and "wrote a rule for it" used to be the same line in the
+ * reading, which is how a sheet that was never written could look pinned. This is
+ * read back off the sheet itself.
+ */
+function quietSheetSummary(): string {
+    const style = typeof document === 'undefined' ?
+        null :
+        document.getElementById(BUTTON_QUIET_STYLE_ID) as HTMLStyleElement | null;
+
+    if (!style || !style.textContent) {
+        return '无（一条规则都没写出去）';
+    }
+
+    return `${installedSheetSummary || '?'}/${style.textContent.length} 字符`;
+}
+
+/** The sheet's text, for a manual reading: the surest way to see what was written. */
+export function headerQuietStyleText(): string {
+    const style = typeof document === 'undefined' ?
+        null :
+        document.getElementById(BUTTON_QUIET_STYLE_ID) as HTMLStyleElement | null;
+
+    return style ? (style.textContent || '') : '';
 }
 
 /**
@@ -1182,7 +1384,9 @@ function headerReadingLine(moment: string, wantList: boolean): string {
         `｜${registrationLine()}` +
         `｜侧栏:${rhs.length > 0 ? rhs.join(',') : '无'}` +
         `｜已发现:${Array.from(discoveredIds).join(',') || '无'}` +
+        `｜样式表:${quietSheetSummary()}` +
         `｜我们的:${ours.length} 个（导航${navCount}/删除${bulkCount}）` +
+        `｜应用栏:${appBarGlyphCount()} 个` +
         `｜${body}`;
 }
 
@@ -1201,6 +1405,15 @@ function printHeaderReading(moment: string, wantList: boolean, withStructure: bo
 
         // eslint-disable-next-line no-console
         console.info(`[customers-plugin] 头部结构 ${moment}｜${html}…`);
+    }
+
+    const sheet = headerQuietStyleText();
+    if (sheet) {
+        // A button can read as pinned and still light up, which means the ring is
+        // painted by something the rules do not name. Only the rules themselves can
+        // settle that, so the manual reading prints them.
+        // eslint-disable-next-line no-console
+        console.info(`[customers-plugin] 压制样式 ${moment}｜${sheet.slice(0, 600)}${sheet.length > 600 ? ' …' : ''}`);
     }
 }
 

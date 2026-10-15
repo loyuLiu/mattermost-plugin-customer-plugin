@@ -26,6 +26,33 @@ const MAX_KEPT = 5;
 /** How much of a stack reaches the banner; a phone screen is not a log viewer. */
 const STACK_LIMIT = 320;
 
+/**
+ * What a frame of this plugin's own bundle carries, so the stack can say whose
+ * failure this is. The plugin is served from `/plugins/<id>/public/…`, and every
+ * frame that came out of our code names it.
+ */
+const PLUGIN_PATH_MARK = 'com.example.customers-plugin';
+
+/**
+ * Local override for one debugging session: `on` forces the banner on even when the
+ * administrator left the setting off, `off` silences it. Read at draw time, so
+ * flipping it and reloading is enough — no reinstall, no config change.
+ *
+ *     localStorage.setItem('customers-plugin:crash-banner', 'on')
+ */
+const BANNER_OVERRIDE_KEY = 'customers-plugin:crash-banner';
+
+/**
+ * Whether the banner may be drawn at all.
+ *
+ * Off until the administrator turns the `CrashBannerEnabled` setting on (or until the
+ * override above says `on`): the banner covers the top of the page for everybody who
+ * uses the site, which makes it a debugging instrument rather than a feature. Errors
+ * are still recorded and mirrored into `localStorage` either way, so a blank page can
+ * still be explained after the fact.
+ */
+let bannerEnabled = false;
+
 export type CrashRecord = {
     /** When it happened, ISO. */
     at: string;
@@ -38,6 +65,12 @@ export type CrashRecord = {
 
     /** Where the error came from: `error`, `rejection`, or a React boundary. */
     source: string;
+
+    /**
+     * Whose code threw it: `plugin` (a frame of our bundle is in the stack) or
+     * `host` (the stack is all Mattermost's own chunks — we only overheard it).
+     */
+    origin: 'plugin' | 'host';
 };
 
 let installed = false;
@@ -75,6 +108,42 @@ function isBenignRejection(reason: unknown): boolean {
     return notAllowed && /\bplay\b|play@|play \(/i.test(error.stack || '');
 }
 
+/**
+ * Whose bundle the stack came out of.
+ *
+ * This reporter listens to the whole window, so it also hears the host page fail —
+ * which is how the blank-page `removeChild` was caught. Those must stay visible. But
+ * a stack with no frame of ours in it is not this plugin's doing, and the record has
+ * to say so, or every host hiccup reads as a plugin bug. With no stack at all the
+ * blame stays here: our own calls are what arrive that way.
+ */
+function originOf(stack: string): 'plugin' | 'host' {
+    if (!stack) {
+        return 'plugin';
+    }
+
+    return stack.indexOf(PLUGIN_PATH_MARK) >= 0 ? 'plugin' : 'host';
+}
+
+/**
+ * A crash that belongs to Mattermost itself: the sidebar-category reducer.
+ *
+ * `mattermost-redux` builds the category map with
+ * `collapsed: action.isWebSocket ? state[category.id].collapsed : category.collapsed`
+ * (`reducers/entities/channel_categories.ts`). Over the WebSocket — a
+ * `sidebar_category_updated` event — it reads the *local* copy first, and a category
+ * the store has never seen has no local copy: `state[category.id]` is `undefined`,
+ * `collapsed` throws, the dispatch rejects. Nothing unmounts, so this cannot blank
+ * the page; the plugin takes no part in it either.
+ *
+ * Archived without the banner, like the autoplay refusal: the banner is a promise
+ * that what it shows is ours, and a banner that cries wolf gets ignored — including
+ * the one time it is telling the truth.
+ */
+function isKnownHostBug(record: CrashRecord): boolean {
+    return record.origin === 'host' && record.message.indexOf("reading 'collapsed'") >= 0;
+}
+
 function push(record: CrashRecord, showBanner = true): void {
     if (kept.length >= MAX_KEPT) {
         return;
@@ -107,11 +176,14 @@ function describe(thrown: unknown, source: string): CrashRecord {
         error.message :
         String(thrown);
 
+    const stack = (error && typeof error.stack === 'string' ? error.stack : '').slice(0, 2000);
+
     return {
         at: new Date().toISOString(),
         message: message.slice(0, 400),
-        stack: (error && typeof error.stack === 'string' ? error.stack : '').slice(0, 2000),
+        stack,
         source,
+        origin: originOf(stack),
     };
 }
 
@@ -132,13 +204,33 @@ export type CrashRecordOptions = {
  * down silently.
  */
 export function recordCrash(thrown: unknown, source = 'error', options?: CrashRecordOptions): void {
-    push(describe(thrown, source), !options?.silent);
+    const record = describe(thrown, source);
+
+    if (isKnownHostBug(record)) {
+        // eslint-disable-next-line no-console
+        console.info('[customers-plugin] 宿主（Mattermost）自身报错，与本插件无关，已存档但不画横幅：' +
+            `${record.message} —— channel_categories reducer：WebSocket 推来一个本地还没有的频道分类`);
+        push(record, false);
+        return;
+    }
+
+    push(record, !options?.silent);
 }
 
 function bannerText(records: CrashRecord[]): string {
     return records.map((record, index) => (
-        `#${index + 1} [${record.source}] ${record.at}\n${record.message}\n${record.stack}`
+        `#${index + 1} [${record.source}${record.origin === 'host' ? '·宿主' : ''}] ${record.at}\n` +
+        `${record.message}\n${record.stack}`
     )).join('\n\n');
+}
+
+/** Host-only failures must not be introduced as this plugin's. */
+function bannerTitle(records: CrashRecord[]): string {
+    if (records.length > 0 && records.every((record) => record.origin === 'host')) {
+        return `Mattermost 自身报错 ${records.length} 条（与本插件无关，仅记录；可截图反馈）`;
+    }
+
+    return `customers-plugin 报错 ${records.length} 条（页面若白屏，这段就是原因；可截图反馈）`;
 }
 
 function dismiss(): void {
@@ -150,6 +242,11 @@ function dismiss(): void {
 
 function drawBanner(): void {
     if (typeof document === 'undefined' || !document.body || kept.length === 0) {
+        return;
+    }
+
+    if (!isCrashBannerEnabled()) {
+        // Recording never stops; only the painting does.
         return;
     }
 
@@ -183,7 +280,7 @@ function drawBanner(): void {
     ].join(';'));
 
     const title = document.createElement('div');
-    title.textContent = `customers-plugin 报错 ${kept.length} 条（页面若白屏，这段就是原因；可截图反馈）`;
+    title.textContent = bannerTitle(kept);
     title.setAttribute('style', 'font-weight:700;margin-bottom:6px');
     banner.appendChild(title);
 
@@ -242,4 +339,52 @@ export function installCrashReporter(): void {
 export function uninstallCrashReporter(): void {
     installed = false;
     dismiss();
+}
+
+function readOverride(): boolean | null {
+    try {
+        if (typeof localStorage === 'undefined') {
+            return null;
+        }
+
+        const value = localStorage.getItem(BANNER_OVERRIDE_KEY);
+        if (value === 'on') {
+            return true;
+        }
+
+        if (value === 'off') {
+            return false;
+        }
+    } catch {
+        // Private mode: the setting stands.
+    }
+
+    return null;
+}
+
+/**
+ * Turns the banner on or off for this page load, from the server configuration.
+ *
+ * Enabling it late still shows everything recorded so far: the reporter is installed
+ * before the configuration has arrived, and the errors of those first milliseconds
+ * are exactly the ones that explain a blank page.
+ */
+export function setCrashBannerEnabled(enabled: boolean): void {
+    bannerEnabled = Boolean(enabled);
+
+    if (!bannerEnabled) {
+        dismiss();
+        return;
+    }
+
+    if (kept.length > 0) {
+        drawBanner();
+    }
+}
+
+/** Whether the banner would be drawn right now: the setting, or the local override. */
+export function isCrashBannerEnabled(): boolean {
+    const override = readOverride();
+
+    return override === null ? bannerEnabled : override;
 }

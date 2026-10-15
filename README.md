@@ -685,6 +685,14 @@ PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整�
 - **批量删除按钮**：基础态、`:focus`、`:focus-visible`、`:hover`、`:active`、`--active` 全压回同一份（背景/描边/阴影/边框/颜色全 `!important`，伪元素 `content:none`，内部后代 svg 的阴影滤镜也清掉）；
 - **产品导航按钮**：只还原基础态与 `--active`，**保留 Mattermost 自己的 hover** —— 截图反馈明确：点开导航时该亮的只有它。
 
+**v0.6.30 定案的又一个坑：选择器列表不能以逗号结尾。** `buttonQuietRules()` 当年拼完状态列表就带着尾逗号直接接 `{`，产出 `#id,#id:focus,…,{…}`。CSS 规范里选择器列表不是容错的——**出现空选择器，整条规则作废**。也就是说导航段那块压制的 CSS **在浏览器里从来没存在过**。更糟的是旧测试只做字符串包含断言，尾逗号的形状被完整掩盖了十几个版本。现在两条护栏：① 断言 CSS 里不出现 `,{`；② 把每张表的选择器列表丢给 `document.querySelector()` 真解析一遍（jsdom 的选择器引擎和浏览器一个态度，会拒绝尾逗号）。**写选择器列表时永远先 `join(',')` 再接 `{`。**
+
+同版另加两套兜底，堵死「钉没落上」这一类：
+
+- **按图标标记的 `:has()` 规则**：`button.channel-header__icon:has([data-cp-glyph="bulk-delete"])`。DOM id 是 `generateId()` 每次注册现生成的——插件禁用再启用，按 id 写的规则全部落空。`data-cp-glyph` 是本插件自己渲染的，跨注册不变，也不依赖发现有没有成功。用 `CSS.supports('selector(:has(*))')` 探测后才产出，且**独立成条**（不支持的选择器和尾逗号一个下场：废掉同列表的整条规则）。
+- **标签兜底补全**：批量删除按钮注册时用的说法是「勾选消息并批量删除」，而标签表里只有「批量删除消息」——标签兜底对它恒失效。两个说法都在表里了（常量统一在 `constants.ts`）。
+- 压制属性扩到后代的 `background/border/color`、状态列表补 `:focus-within`（图标拿到焦点、环画在按钮上的那种）。
+
 还有一条 Mattermost 自己的行为要记住：侧栏开合期间，插件频道头部按钮会被摘掉 / 延时恢复（`CHANNEL_HEADER_BUTTON_DISABLE_TIMEOUT`，10.12 是 1000ms）。所以「点开导航的瞬间，批量删除按钮像被点亮」很可能不是插件按钮本身 —— 侧栏一开，频道头部重排，顶替它位置的**原生**图标接受了焦点环或鼠标悬停，那件高亮我们的样式表够不着。
 
 脱离现场、需要自己判断的时候，插件里留了临时诊断 `logHeaderButtonPaint()`：按 0/300/1000/2000ms 打四轮，单列本插件的按钮、列出头部所有可点元素的真实计算样式与屏幕位置，并附上侧栏是否在场和头部结构。
@@ -733,7 +741,32 @@ PUT  /api/v1/navigation          # 仅系统管理员（manage_system）：整�
 2. **`installCrashReporter()`** —— 插件启动第一件事。监听 `error` / `unhandledrejection`，把前 5 条存进 `localStorage['customers-plugin:last-errors']`；
 3. **页面上的红色横幅** —— 错误**用原生 DOM 画**到页面顶部，不经过 React（React 树已经崩了，靠它渲染的东西也一起没了）。手机上没有控制台可读，白屏时这一条横幅就是唯一的线索，截图即可反馈。
 
-**横幅会过滤一种「良民」**（v0.6.29 起）：手机浏览器的**自动播放拒绝**——宿主应用收到新消息想播提示音，`play()` 的 Promise 被浏览器按策略拒绝，留下一条未捕获 rejection（报文含 `not allowed by the user agent`、栈里有 `play@native code`）。它不破坏任何功能，不是白屏原因；照旧静默存档，但**不画横幅**——横幅一旦为无关紧要的事响过一次，读者就再也不信它了。
+**横幅会过滤两种「良民」**（不画横幅，照旧存档）：
+
+1. **自动播放拒绝**（v0.6.29 起）——宿主应用收到新消息想播提示音，`play()` 的 Promise 被浏览器按策略拒绝，留下一条未捕获 rejection（报文含 `not allowed by the user agent`、栈里有 `play@native code`）。它不破坏任何功能，不是白屏原因；
+2. **Mattermost 自己的侧栏分类缺陷**（v0.6.32 起）——见下。
+
+横幅一旦为无关紧要的事响过一次，读者就再也不信它了；真到白屏那一次，没人会看。
+
+**横幅默认关闭**（v0.6.33 起）。它盖在每个页面顶部、**对所有登录用户都可见**，所以它是排查工具，不是常驻功能。需要时用其中一种方式打开：
+
+1. **系统控制台 → 插件 → Customers Plugin → 「页面崩溃提示横幅（排查用）」** —— 全站生效，排查完记得关回去；
+2. **只对自己开**（不改配置、不重装）：浏览器控制台执行 `localStorage.setItem('customers-plugin:crash-banner', 'on')` 后刷新，排查完 `removeItem` 即可；
+3. **横幅关着也照样记录**：`JSON.parse(localStorage.getItem('customers-plugin:last-errors') || '[]')` 随时能读到最近 5 条，事后取证不依赖横幅有没有画出来。
+
+开关打开得晚也没关系：上报器装得比配置还早，配置一到就会把那之前记录的错误补画出来——而启动最初那几毫秒的错，恰恰才是解释白屏的那几条。
+
+#### 上报器会听见「宿主自己的错」，要分清是谁的
+
+`installCrashReporter()` 监听的是**整个 window**，所以它也会记下 Mattermost 自己抛的错——白屏那次就是这样抓到的，这一层不能关。但「记下」不等于「认领」：每条记录按堆栈**判断归属**，栈里没有我们自己的帧（`/plugins/com.example.customers-plugin/`）就是 `origin: 'host'`，横幅里标成 `[rejection·宿主]`；**全是宿主报错时，标题直接写「Mattermost 自身报错 N 条（与本插件无关）」**，不再说成是插件的错。
+
+现场已经见过一次：`Cannot read properties of undefined (reading 'collapsed')`。这是 10.12 的 `mattermost-redux` 侧栏分类 reducer 的缺陷（`reducers/entities/channel_categories.ts`）：
+
+```ts
+collapsed: action.isWebSocket ? state[category.id].collapsed : category.collapsed
+```
+
+WebSocket 推来 `sidebar_category_updated` 时它先读**本地**那份，而一个本地还没见过的分类没有本地副本，`state[category.id]` 是 `undefined`，`collapsed` 当场抛、dispatch 整条链 reject。**它不会白屏**（没有任何树被卸载），也与本插件无关——插件既不派发这个 action，也不接触分类接口（fetch 过滤只认 `…/posts*`）。所以它被归进「良民」：存档不画横幅，控制台留一行说明。
 
 排查白屏时先看横幅；没有横幅，说明页面不是被异常打断的（那才是样式或数据的问题）。控制台里也能取：
 
@@ -746,6 +779,28 @@ JSON.parse(localStorage.getItem('customers-plugin:last-errors') || '[]')
 0.6.27 的横幅在真机上抓到了白屏本身：`The object can not be found here. removeChild`，堆栈落在 **react-dom 提交删除阶段** —— React 删除自己渲染的节点时，那个节点已经不在它以为的父节点里了。这是 DOM 所有权冲突，**错误边界够不到**（发生在 React 提交阶段），整棵树当场卸载。
 
 `installDomGuard()` 紧跟崩溃取证安装，把 `removeChild` / `insertBefore` 包上容忍层：**只有本来要抛的那一种情况**才走兜底（节点挪位→从实际位置删；已游离→按已删除处理；参照挪位→贴着参照点插），其余一律原样透传。每次介入静默记进 `localStorage`（不画横幅、2 秒节流），同一时刻连续介入只记一条。同时把历史提示条从 React 管理的 `#channel-header` 里搬出来，改成 `body` 下的 fixed 浮条——插件在 React 树里的结构性动作又少了一个。
+
+### 3.8.9 按钮也可能不在频道头部，而在应用栏（app-bar）
+
+Mattermost 开了 **App Bar** 时，`registerChannelHeaderButtonAction` 注册的按钮不再进 `.channel-header`，而是渲染进 `div.app-bar`（频道左侧竖直图标条）。那套 DOM 和频道头部**完全不是一回事**：
+
+```html
+<div class="app-bar__icon app-bar__icon--active" id="app-bar-icon-<pluginId>">
+  <div role="button" class="app-bar__old-icon app-bar__icon-inner app-bar__old-icon--active">
+    <svg data-cp-glyph="bulk-delete"></svg>
+  </div>
+</div>
+```
+
+三条源码事实（10.12 `app_bar_plugin_component.tsx` / `app_bar.scss`）：
+
+1. **可点的是 `div[role=button]`**，不是 `button.channel-header__icon` —— 之前按频道头部写的所有规则在这套 DOM 上**一个都匹配不到**（这就是 0.6.30 修完「还是亮」的原因）；
+2. **激活态按插件 id 算**：`isButtonActive = component.pluginId === activeRhsComponent?.pluginId`。本插件的两个按钮**同属一个 pluginId**，点开导航右侧栏后，**两个按钮同时被加上 `--active`** —— 蓝圈（`.app-bar__icon--active .app-bar__icon-inner{box-shadow:0 0 0 2px}`）就是这么同时亮起来的。**不是同一个容器 div 带来的，是同一个插件 id 带来的**；
+3. **两个包装 div 共用同一个 id**（`buttonId = 'app-bar-icon-' + component.pluginId`） —— 按 id 写规则无法区分它们，写了还会把导航按钮该有的高亮一起压掉。
+
+所以应用栏这一套**只按 `data-cp-glyph` 标记写**（`appBarQuietRules()`）：把删除按钮的 `box-shadow`（静息/hover/active 三种）、包装 div 的激活小竖条 `::before`、以及 `--active` 时的图标配色全部钉死；导航按钮**一条规则都不写**——它保留原生 `--active` 蓝圈，那正是现场要求「只高亮产品导航」。
+
+这套规则和频道头部那套一样，**不依赖「先发现到按钮」**：发现不到按钮时照样写进样式表（应用栏里压根没有可发现的独立 id）。诊断读数因此多一格 `应用栏:N 个`；`我们的:0 个` 且 `应用栏:2 个` 时插件会主动打一行说明，不再报「补钉没认出来」——那句话会把下一次排查重新引回频道头部。
 
 ---
 
@@ -972,7 +1027,7 @@ MM-DD HH:mm               → 09-15 09:42
 | 批量删除接口返回 403 | ① `BulkDeleteEnabled` 是否开启；② 删除别人的消息需要 `delete_others_posts`（系统管理员或有该权限的频道管理员）；③ 响应里的 `denied` 会告诉你有多少条因为无权限被跳过 |
 | 预览条数是 0 | 检查 `channelId` 是否选对、时间范围是否用本地时间（面板里填的是本地时间，会转成毫秒时间戳）、关键词大小写不敏感但必须是消息正文的子串 |
 | 频道头部没有产品导航按钮 | ① `ProductNavEnabled` 是否为 true；② **必须至少配置一条链接**（没有条目时按钮根本不注册）；③ 改完设置要保存并 Ctrl+F5；④ 看控制台 `/api/v1/navigation` 是否返回了非空的 `categories` |
-| 点开导航后，批量删除按钮像被点亮了 | 见 3.8.7：开栏会让频道头部重渲染，按钮是那一次才进的 DOM，鼠标原位正好落在它上面，它自己的 hover 就是那圈蓝。v0.6.24 起已把该按钮的 hover/focus/按下态压回原样（导航按钮照旧保留自己的高亮）；v0.6.26 起按钮**一进 DOM 就自动补钉**，不用等某个固定时刻。仍复现时先**点一次产品导航**再看控制台有没有 `[customers-plugin] 头部按钮 补钉没认出来…` 那一行：有，说明按钮没认出来——连同后面那句 `头部长这样:` 那个无名 `0x0` 空壳一起看，那就是图标没渲染出来；没有，说明已经钉上了，那圈蓝不是背景/描边/阴影/边框画的，再敲 `customersPluginDiag('点开导航后')` 看 `已钉(全)` 那一段的真实计算值 |
+| 点开导航后，批量删除按钮像被点亮了 | 见 3.8.7：开栏会让频道头部重渲染，按钮是那一次才进的 DOM，鼠标原位正好落在它上面，它自己的 hover 就是那圈蓝。v0.6.24 起已把该按钮的 hover/focus/按下态压回原样（导航按钮照旧保留自己的高亮）；v0.6.26 起按钮**一进 DOM 就自动补钉**，不用等某个固定时刻。仍复现时先**点一次产品导航**再看控制台有没有 `[customers-plugin] 头部按钮 补钉没认出来…` 那一行：有，说明按钮没认出来——连同后面那句 `头部长这样:` 那个无名 `0x0` 空壳一起看，那就是图标没渲染出来；没有，说明已经钉上了，那圈蓝不是背景/描边/阴影/边框画的，再敲 `customersPluginDiag('点开导航后')`：读数里新增了一格 `样式表:N 条(全x/基y +has)/M 字符`（对着样式表本身读，不再把「认到按钮」当成「写了规则」），并会另打一行 `压制样式 …` 把实际写出去的 CSS 原文贴出来——钉上了还亮时，一眼能看出那圈是哪个属性画的。v0.6.30 另加了与 id 无关的 `:has([data-cp-glyph=…])` 兜底规则，插件重载导致 id 全换的那类失效也一并堵住了 |
 | 点了按钮右侧栏没出现 / 出现的是空的 | 见 3.8.4。右侧栏是 Mattermost 的：① 打开回复串或搜索会占用同一列（它们优先）；② 栏位里只有「暂无产品导航」说明条目为空，回到控制台确认至少一条链接通过了校验；③ 0.6.11 之前的版本是自建下拉面板，升级后需 Ctrl+F5 拿新 bundle |
 | 导航保存后用户端没变化 | 栏目里「打开时重新拉一次」，所以**点开导航那一刻**就一定是最新条目，不必刷新页面；但按钮的「有没有条目」是插件启动时判的，第一次上传新版本后仍要 Ctrl+F5 |
 | 某条链接保存后消失了 | 服务端只保留能渲染的条目：地址为空、地址不是 http(s)/站点相对路径、或名称为空的链接会被丢弃。检查地址是否写成了 `example.com`（缺 `https://`） |

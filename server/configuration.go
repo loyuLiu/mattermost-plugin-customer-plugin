@@ -143,6 +143,16 @@ type configuration struct {
 	ProductNavLinksPerRow int
 
 	// ---------------------------------------------------------------------
+	// Diagnostics
+	// ---------------------------------------------------------------------
+
+	// CrashBannerEnabled lets the webapp paint its red error banner on the page.
+	// It ships off: the banner covers the top of every page for every user, so it
+	// belongs to a debugging session, not to a running site. Errors are still
+	// mirrored into localStorage (and into the console) either way.
+	CrashBannerEnabled bool
+
+	// ---------------------------------------------------------------------
 	// Channel history visibility (second feature)
 	// ---------------------------------------------------------------------
 

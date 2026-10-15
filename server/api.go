@@ -36,6 +36,11 @@ type publicConfig struct {
 	ReadStatus        readStatusConfig  `json:"readStatus"`
 	BulkDelete        bulkDeleteConfig  `json:"bulkDelete"`
 	ProductNav        productNavConfig  `json:"productNav"`
+
+	// CrashBanner tells the webapp whether it may draw its error banner. Off by
+	// default: the banner sits on top of the page for everybody, so it is a
+	// debugging instrument, not a permanent feature.
+	CrashBanner bool `json:"crashBanner"`
 }
 
 // productNavConfig drives the button injected into the global header. The entries
@@ -217,6 +222,7 @@ func (p *Plugin) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			IconURL:     config.ProductNavIconURL,
 			LinksPerRow: config.ProductNavLinksPerRow,
 		},
+		CrashBanner: config.CrashBannerEnabled,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

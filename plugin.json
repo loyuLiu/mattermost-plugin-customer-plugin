@@ -1,265 +1,275 @@
 {
-    "id": "com.example.customers-plugin",
-    "name": "Customers Plugin",
-    "description": "客户化定制插件：自定义聊天窗口时间显示格式、新成员历史消息隔离、私信已读/未读标记、批量删除消息，以及在全局头部右上角提供可配置的产品导航。",
-    "homepage_url": "https://github.com/example/mattermost-plugin-customers",
-    "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
-    "release_notes_url": "",
-    "icon_path": "assets/icon.svg",
-    "version": "0.6.29",
-    "min_server_version": "10.0.0",
-    "server": {
-        "executables": {
-            "linux-amd64": "server/dist/plugin-linux-amd64",
-            "linux-arm64": "server/dist/plugin-linux-arm64",
-            "darwin-amd64": "server/dist/plugin-darwin-amd64",
-            "darwin-arm64": "server/dist/plugin-darwin-arm64",
-            "windows-amd64": "server/dist/plugin-windows-amd64.exe"
-        }
-    },
-    "webapp": {
-        "bundle_path": "webapp/dist/main.js"
-    },
-    "settings_schema": {
-        "header": "配置 Customers Plugin 的各项能力。时间格式支持管理员统一配置与用户个人偏好；历史消息隔离、私信已读/未读、批量删除与产品导航均为服务端行为，用户端无法绕过。",
-        "footer": "",
-        "settings": [
-            {
-                "key": "Enabled",
-                "display_name": "启用时间格式自定义",
-                "type": "bool",
-                "help_text": "开启后，聊天窗口中的时间将按下方格式重新渲染。关闭则 Mattermost 保持默认显示。",
-                "default": true
-            },
-            {
-                "key": "TimeFormat",
-                "display_name": "默认时间格式",
-                "type": "text",
-                "help_text": "支持令牌：YYYY YY MMMM MMM MM M DD D dddd ddd HH H hh h mm m ss s SSS A a Z ZZ X x，可用方括号包裹字面量如 [ 年 ]。示例：YYYY-MM-DD HH:mm:ss、YYYY年MM月DD日 HH:mm",
-                "default": "YYYY-MM-DD HH:mm",
-                "placeholder": "YYYY-MM-DD HH:mm"
-            },
-            {
-                "key": "TimeZone",
-                "display_name": "时区",
-                "type": "text",
-                "help_text": "留空表示使用浏览器本地时区；也可填写 IANA 时区名，例如 Asia/Shanghai、America/New_York、UTC。",
-                "default": "",
-                "placeholder": "留空 = 浏览器本地时区"
-            },
-            {
-                "key": "ApplyTo",
-                "display_name": "适用范围",
-                "type": "dropdown",
-                "help_text": "post：仅替换消息气泡上的时间（time.post__time）；all：替换页面中所有 <time> 元素（含鼠标悬停提示、搜索结果、右侧边栏等）。",
-                "default": "post",
-                "options": [
-                    {
-                        "display_name": "仅消息时间（推荐）",
-                        "value": "post"
-                    },
-                    {
-                        "display_name": "页面内所有时间元素",
-                        "value": "all"
-                    }
-                ]
-            },
-            {
-                "key": "AllowUserOverride",
-                "display_name": "允许用户自定义",
-                "type": "bool",
-                "help_text": "允许每个用户在自己的「设置」里覆盖默认格式与开关。",
-                "default": true
-            },
-            {
-                "key": "GroupedTimeEnabled",
-                "display_name": "合并消息用浮框显示时间",
-                "type": "bool",
-                "help_text": "同一人连续发送的消息会被合并成一个消息块，从第 2 条起默认不显示时间。开启后，鼠标移到这些合并消息上会以浮框显示该条的完整时间（格式与上面一致）。",
-                "default": true
-            },
-            {
-                "key": "GroupedTimePosition",
-                "display_name": "浮框位置",
-                "type": "dropdown",
-                "help_text": "cursor：跟随鼠标指针；left：贴在该条消息的左侧；right：浮在该条消息的右上角。",
-                "default": "cursor",
-                "options": [
-                    {
-                        "display_name": "跟随鼠标（推荐）",
-                        "value": "cursor"
-                    },
-                    {
-                        "display_name": "消息左侧",
-                        "value": "left"
-                    },
-                    {
-                        "display_name": "消息右上角",
-                        "value": "right"
-                    }
-                ]
-            },
-            {
-                "key": "GroupedTimeHideInline",
-                "display_name": "隐藏悬停时的内联时间",
-                "type": "bool",
-                "help_text": "Mattermost 默认会在鼠标悬停时把时间插进消息标题行。开启后隐藏它，避免与浮框重复显示同一时间，也避免顶开版面。",
-                "default": true
-            },
-            {
-                "key": "ReadStatusEnabled",
-                "display_name": "显示私信已讀/未讀标记",
-                "type": "bool",
-                "help_text": "开启后，私信（含群私信）中的每条消息会在右上角显示状态：未讀为黄色小圆圈 +「未讀」，已讀为绿色小圆圈 +「已讀」。公开与私有频道不显示标记。判定依据是看消息的人：别人发给你的消息，看「你」有没有读过；你发出去的消息，看「对方」有没有读过（群私信要所有人都读过才算已讀）。",
-                "default": true
-            },
-            {
-                "key": "BulkDeleteEnabled",
-                "display_name": "启用批量删除消息",
-                "type": "bool",
-                "help_text": "开启后，系统管理员可在下方「批量删除消息」面板按条件删除消息，频道管理员也可在会话中勾选消息删除。删除不可恢复，请谨慎开启。",
-                "default": false
-            },
-            {
-                "key": "BulkDeleteMaxPosts",
-                "display_name": "单次删除上限",
-                "type": "number",
-                "help_text": "一次请求最多删除多少条消息，用于防止误操作波及面过大。留空或填 0 表示 500 条，最大 10000 条。",
-                "default": 500
-            },
-            {
-                "key": "BulkDeletePanel",
-                "display_name": "批量删除消息",
-                "type": "custom",
-                "help_text": "按会话、发送者、关键词和时间范围筛选消息，先预览数量再执行删除。"
-            },
-            {
-                "key": "ProductNavEnabled",
-                "display_name": "启用产品导航",
-                "type": "bool",
-                "help_text": "开启后，全局头部右上角会显示「产品导航」按钮，点击展开下方配置的分类与网站链接。未配置任何链接时不显示按钮，因此开启本身不会改变界面。",
-                "default": true
-            },
-            {
-                "key": "ProductNavIconUrl",
-                "display_name": "产品导航按钮图标",
-                "type": "text",
-                "help_text": "按钮上显示的图片地址，例如 https://example.com/static/nav.png 或站点相对路径 /static/nav.png。留空则使用插件内置的九宫格图标。仅接受 http(s) 与站点相对路径，其他值会被忽略。建议 20×20 以上、背景透明。",
-                "default": "",
-                "placeholder": "留空 = 使用内置图标"
-            },
-            {
-                "key": "ProductNavLinksPerRow",
-                "display_name": "每行显示的链接数",
-                "type": "number",
-                "help_text": "展开面板后，每个分类一行显示多少个链接，例如填 5 就是一行 5 个，超出部分换到下一行。面板宽度会跟着这个数字自动调整。可填 1 到 12，留空、0 或超出范围则按 5 处理。",
-                "default": 5
-            },
-            {
-                "key": "ProductNavPanel",
-                "display_name": "产品导航",
-                "type": "custom",
-                "help_text": "添加分类，并在每个分类下添加网站链接与 logo 图标。保存后所有用户刷新页面即可在右上角看到。"
-            },
-            {
-                "key": "HistoryLockEnabled",
-                "display_name": "启用新成员历史消息隔离",
-                "type": "bool",
-                "help_text": "开启后，新加入频道的成员将看不到其加入之前的历史消息。边界由服务端记录，前端负责隐藏。",
-                "default": true
-            },
-            {
-                "key": "HistoryMode",
-                "display_name": "历史可见范围",
-                "type": "dropdown",
-                "help_text": "since_join：只看该成员加入频道之后发送的消息（推荐）。recent_days：所有成员都只能看到最近 N 天的消息（N 见下方）。off：不做任何限制。",
-                "default": "since_join",
-                "options": [
-                    {
-                        "display_name": "只看加入之后（推荐）",
-                        "value": "since_join"
-                    },
-                    {
-                        "display_name": "只看最近 N 天",
-                        "value": "recent_days"
-                    },
-                    {
-                        "display_name": "不限制",
-                        "value": "off"
-                    }
-                ]
-            },
-            {
-                "key": "HistoryDays",
-                "display_name": "最近 N 天的天数",
-                "type": "text",
-                "help_text": "仅在「历史可见范围 = 只看最近 N 天」时生效。填写正整数。",
-                "default": "7",
-                "placeholder": "7"
-            },
-            {
-                "key": "LegacyMemberMode",
-                "display_name": "存量成员如何处理",
-                "type": "dropdown",
-                "help_text": "插件只记录安装之后发生的加入事件。对于没有记录的成员：show_all 表示不限制（推荐，安装插件不会让老成员丢历史）；since_activation 表示以插件首次启用时间为边界。如需对个别成员精确设置，可用管理接口 POST /api/v1/history/boundary 回填。",
-                "default": "show_all",
-                "options": [
-                    {
-                        "display_name": "不限制（推荐）",
-                        "value": "show_all"
-                    },
-                    {
-                        "display_name": "以插件启用时间为边界",
-                        "value": "since_activation"
-                    }
-                ]
-            },
-            {
-                "key": "HideInSearch",
-                "display_name": "同时隐藏搜索与右侧栏中的历史消息",
-                "type": "bool",
-                "help_text": "开启后，被隐藏的消息在搜索结果、右侧线程、置顶与已保存列表中同样不可见。",
-                "default": true
-            },
-            {
-                "key": "HistoryPendingPolicy",
-                "display_name": "边界未取回时消息行的处理",
-                "type": "dropdown",
-                "help_text": "切换频道时服务端可能还没返回该频道的可见边界。「留白」会隐藏行内容但保留行高（不会泄露历史，也不会让滚动条跳动）；「照常显示」会先渲染出来，可能有一瞬间能看到加入前的消息。",
-                "default": "blank",
-                "options": [
-                    {
-                        "display_name": "留白（推荐）",
-                        "value": "blank"
-                    },
-                    {
-                        "display_name": "照常显示",
-                        "value": "show"
-                    }
-                ]
-            },
-            {
-                "key": "HistoryNoticeEnabled",
-                "display_name": "显示隐藏提示",
-                "type": "bool",
-                "help_text": "在频道顶部显示一条提示，说明更早的消息已被隐藏。",
-                "default": true
-            },
-            {
-                "key": "HistoryNoticeText",
-                "display_name": "隐藏提示文案",
-                "type": "text",
-                "help_text": "显示在频道顶部的提示文字。",
-                "default": "此消息及之前的消息发送于你加入本频道之前，已隐藏",
-                "placeholder": "此消息及之前的消息发送于你加入本频道之前，已隐藏"
-            },
-            {
-                "key": "ExemptSystemAdmins",
-                "display_name": "系统管理员不受限制",
-                "type": "bool",
-                "help_text": "开启后，拥有「管理服务器」权限的用户仍可看到完整历史，便于排障。",
-                "default": false
-            }
-        ]
+  "id": "com.example.customers-plugin",
+  "name": "Customers Plugin",
+  "description": "客户化定制插件：自定义聊天窗口时间显示格式、新成员历史消息隔离、私信已读/未读标记、批量删除消息，以及在全局头部右上角提供可配置的产品导航。",
+  "homepage_url": "https://github.com/example/mattermost-plugin-customers",
+  "support_url": "https://github.com/example/mattermost-plugin-customers/issues",
+  "release_notes_url": "",
+  "icon_path": "assets/icon.svg",
+  "version": "0.6.33",
+  "min_server_version": "10.0.0",
+  "server": {
+    "executables": {
+      "linux-amd64": "server/dist/plugin-linux-amd64",
+      "linux-arm64": "server/dist/plugin-linux-arm64",
+      "darwin-amd64": "server/dist/plugin-darwin-amd64",
+      "darwin-arm64": "server/dist/plugin-darwin-arm64",
+      "windows-amd64": "server/dist/plugin-windows-amd64.exe"
     }
+  },
+  "webapp": {
+    "bundle_path": "webapp/dist/main.js"
+  },
+  "settings_schema": {
+    "header": "配置 Customers Plugin 的各项能力。时间格式支持管理员统一配置与用户个人偏好；历史消息隔离、私信已读/未读、批量删除与产品导航均为服务端行为，用户端无法绕过。",
+    "footer": "",
+    "settings": [
+      {
+        "key": "Enabled",
+        "display_name": "启用时间格式自定义",
+        "type": "bool",
+        "help_text": "开启后，聊天窗口中的时间将按下方格式重新渲染。关闭则 Mattermost 保持默认显示。",
+        "default": true
+      },
+      {
+        "key": "TimeFormat",
+        "display_name": "默认时间格式",
+        "type": "text",
+        "help_text": "支持令牌：YYYY YY MMMM MMM MM M DD D dddd ddd HH H hh h mm m ss s SSS A a Z ZZ X x，可用方括号包裹字面量如 [ 年 ]。示例：YYYY-MM-DD HH:mm:ss、YYYY年MM月DD日 HH:mm",
+        "default": "YYYY-MM-DD HH:mm",
+        "placeholder": "YYYY-MM-DD HH:mm"
+      },
+      {
+        "key": "TimeZone",
+        "display_name": "时区",
+        "type": "text",
+        "help_text": "留空表示使用浏览器本地时区；也可填写 IANA 时区名，例如 Asia/Shanghai、America/New_York、UTC。",
+        "default": "",
+        "placeholder": "留空 = 浏览器本地时区"
+      },
+      {
+        "key": "ApplyTo",
+        "display_name": "适用范围",
+        "type": "dropdown",
+        "help_text": "post：仅替换消息气泡上的时间（time.post__time）；all：替换页面中所有 <time> 元素（含鼠标悬停提示、搜索结果、右侧边栏等）。",
+        "default": "post",
+        "options": [
+          {
+            "display_name": "仅消息时间（推荐）",
+            "value": "post"
+          },
+          {
+            "display_name": "页面内所有时间元素",
+            "value": "all"
+          }
+        ]
+      },
+      {
+        "key": "AllowUserOverride",
+        "display_name": "允许用户自定义",
+        "type": "bool",
+        "help_text": "允许每个用户在自己的「设置」里覆盖默认格式与开关。",
+        "default": true
+      },
+      {
+        "key": "GroupedTimeEnabled",
+        "display_name": "合并消息用浮框显示时间",
+        "type": "bool",
+        "help_text": "同一人连续发送的消息会被合并成一个消息块，从第 2 条起默认不显示时间。开启后，鼠标移到这些合并消息上会以浮框显示该条的完整时间（格式与上面一致）。",
+        "default": true
+      },
+      {
+        "key": "GroupedTimePosition",
+        "display_name": "浮框位置",
+        "type": "dropdown",
+        "help_text": "cursor：跟随鼠标指针；left：贴在该条消息的左侧；right：浮在该条消息的右上角。",
+        "default": "cursor",
+        "options": [
+          {
+            "display_name": "跟随鼠标（推荐）",
+            "value": "cursor"
+          },
+          {
+            "display_name": "消息左侧",
+            "value": "left"
+          },
+          {
+            "display_name": "消息右上角",
+            "value": "right"
+          }
+        ]
+      },
+      {
+        "key": "GroupedTimeHideInline",
+        "display_name": "隐藏悬停时的内联时间",
+        "type": "bool",
+        "help_text": "Mattermost 默认会在鼠标悬停时把时间插进消息标题行。开启后隐藏它，避免与浮框重复显示同一时间，也避免顶开版面。",
+        "default": true
+      },
+      {
+        "key": "ReadStatusEnabled",
+        "display_name": "显示私信已讀/未讀标记",
+        "type": "bool",
+        "help_text": "开启后，私信（含群私信）中的每条消息会在右上角显示状态：未讀为黄色小圆圈 +「未讀」，已讀为绿色小圆圈 +「已讀」。公开与私有频道不显示标记。判定依据是看消息的人：别人发给你的消息，看「你」有没有读过；你发出去的消息，看「对方」有没有读过（群私信要所有人都读过才算已讀）。",
+        "default": true
+      },
+      {
+        "key": "BulkDeleteEnabled",
+        "display_name": "启用批量删除消息",
+        "type": "bool",
+        "help_text": "开启后，系统管理员可在下方「批量删除消息」面板按条件删除消息，频道管理员也可在会话中勾选消息删除。删除不可恢复，请谨慎开启。",
+        "default": false
+      },
+      {
+        "key": "BulkDeleteMaxPosts",
+        "display_name": "单次删除上限",
+        "type": "number",
+        "help_text": "一次请求最多删除多少条消息，用于防止误操作波及面过大。留空或填 0 表示 500 条，最大 10000 条。",
+        "default": 500
+      },
+      {
+        "key": "BulkDeletePanel",
+        "display_name": "批量删除消息",
+        "type": "custom",
+        "help_text": "按会话、发送者、关键词和时间范围筛选消息，先预览数量再执行删除。"
+      },
+      {
+        "key": "ProductNavEnabled",
+        "display_name": "启用产品导航",
+        "type": "bool",
+        "help_text": "开启后，全局头部右上角会显示「产品导航」按钮，点击展开下方配置的分类与网站链接。未配置任何链接时不显示按钮，因此开启本身不会改变界面。",
+        "default": true
+      },
+      {
+        "key": "ProductNavIconUrl",
+        "display_name": "产品导航按钮图标",
+        "type": "text",
+        "help_text": "按钮上显示的图片地址，例如 https://example.com/static/nav.png 或站点相对路径 /static/nav.png。留空则使用插件内置的九宫格图标。仅接受 http(s) 与站点相对路径，其他值会被忽略。建议 20×20 以上、背景透明。",
+        "default": "",
+        "placeholder": "留空 = 使用内置图标"
+      },
+      {
+        "key": "ProductNavLinksPerRow",
+        "display_name": "每行显示的链接数",
+        "type": "number",
+        "help_text": "展开面板后，每个分类一行显示多少个链接，例如填 5 就是一行 5 个，超出部分换到下一行。面板宽度会跟着这个数字自动调整。可填 1 到 12，留空、0 或超出范围则按 5 处理。",
+        "default": 5
+      },
+      {
+        "key": "ProductNavPanel",
+        "display_name": "产品导航",
+        "type": "custom",
+        "help_text": "添加分类，并在每个分类下添加网站链接与 logo 图标。保存后所有用户刷新页面即可在右上角看到。"
+      },
+      {
+        "key": "HistoryLockEnabled",
+        "display_name": "启用新成员历史消息隔离",
+        "type": "bool",
+        "help_text": "开启后，新加入频道的成员将看不到其加入之前的历史消息。边界由服务端记录，前端负责隐藏。",
+        "default": true
+      },
+      {
+        "key": "HistoryMode",
+        "display_name": "历史可见范围",
+        "type": "dropdown",
+        "help_text": "since_join：只看该成员加入频道之后发送的消息（推荐）。recent_days：所有成员都只能看到最近 N 天的消息（N 见下方）。off：不做任何限制。",
+        "default": "since_join",
+        "options": [
+          {
+            "display_name": "只看加入之后（推荐）",
+            "value": "since_join"
+          },
+          {
+            "display_name": "只看最近 N 天",
+            "value": "recent_days"
+          },
+          {
+            "display_name": "不限制",
+            "value": "off"
+          }
+        ]
+      },
+      {
+        "key": "HistoryDays",
+        "display_name": "最近 N 天的天数",
+        "type": "text",
+        "help_text": "仅在「历史可见范围 = 只看最近 N 天」时生效。填写正整数。",
+        "default": "7",
+        "placeholder": "7"
+      },
+      {
+        "key": "LegacyMemberMode",
+        "display_name": "存量成员如何处理",
+        "type": "dropdown",
+        "help_text": "插件只记录安装之后发生的加入事件。对于没有记录的成员：show_all 表示不限制（推荐，安装插件不会让老成员丢历史）；since_activation 表示以插件首次启用时间为边界。如需对个别成员精确设置，可用管理接口 POST /api/v1/history/boundary 回填。",
+        "default": "show_all",
+        "options": [
+          {
+            "display_name": "不限制（推荐）",
+            "value": "show_all"
+          },
+          {
+            "display_name": "以插件启用时间为边界",
+            "value": "since_activation"
+          }
+        ]
+      },
+      {
+        "key": "HideInSearch",
+        "display_name": "同时隐藏搜索与右侧栏中的历史消息",
+        "type": "bool",
+        "help_text": "开启后，被隐藏的消息在搜索结果、右侧线程、置顶与已保存列表中同样不可见。",
+        "default": true
+      },
+      {
+        "key": "HistoryPendingPolicy",
+        "display_name": "边界未取回时消息行的处理",
+        "type": "dropdown",
+        "help_text": "切换频道时服务端可能还没返回该频道的可见边界。「留白」会隐藏行内容但保留行高（不会泄露历史，也不会让滚动条跳动）；「照常显示」会先渲染出来，可能有一瞬间能看到加入前的消息。",
+        "default": "blank",
+        "options": [
+          {
+            "display_name": "留白（推荐）",
+            "value": "blank"
+          },
+          {
+            "display_name": "照常显示",
+            "value": "show"
+          }
+        ]
+      },
+      {
+        "key": "HistoryNoticeEnabled",
+        "display_name": "显示隐藏提示",
+        "type": "bool",
+        "help_text": "在频道顶部显示一条提示，说明更早的消息已被隐藏。",
+        "default": true
+      },
+      {
+        "key": "HistoryNoticeText",
+        "display_name": "隐藏提示文案",
+        "type": "text",
+        "help_text": "显示在频道顶部的提示文字。",
+        "default": "此消息及之前的消息发送于你加入本频道之前，已隐藏",
+        "placeholder": "此消息及之前的消息发送于你加入本频道之前，已隐藏"
+      },
+      {
+        "key": "ExemptSystemAdmins",
+        "display_name": "系统管理员不受限制",
+        "type": "bool",
+        "help_text": "开启后，拥有「管理服务器」权限的用户仍可看到完整历史，便于排障。",
+        "default": false
+      },
+      {
+        "key": "CrashBannerEnabled",
+        "display_name": "页面崩溃提示横幅（排查用）",
+        "type": "bool",
+        "help_text": "开启后，插件捕获到的未捕获错误/未处理 Promise 拒绝会在页面顶部画一条红色横幅，用于排查白屏（手机浏览器没有控制台时尤其有用）。默认关闭：横幅会盖在每个页面顶部、对所有人都可见，属于排查工具而非常驻功能。关闭时错误仍然记录，可在浏览器控制台执行 JSON.parse(localStorage.getItem('customers-plugin:last-errors') || '[]') 读取；临时只对自己打开则执行 localStorage.setItem('customers-plugin:crash-banner','on') 后刷新。",
+        "placeholder": "",
+        "default": false,
+        "hosting": "",
+        "secret": false
+      }
+    ]
+  }
 }

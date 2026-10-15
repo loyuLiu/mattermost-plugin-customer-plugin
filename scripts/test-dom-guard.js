@@ -184,6 +184,10 @@ const records = () => crash.getCrashRecords();
 
     console.log('\n[7] 静默记录不画横幅，画过的横幅可以被清掉');
     {
+        // 横幅默认关（v0.6.33 起），这一段要显式打开；先清掉前面静默存档的几条，
+        // 否则打开开关时它们会被补画出来（补画本身是特性，但这一段要验的是「静默」）。
+        crash.resetCrashRecords();
+        crash.setCrashBannerEnabled(true);
         ok(document.getElementById('customers-plugin-crash-banner') === null,
             '纯兜底介入没有惊动页面（无红色横幅）');
         crash.recordCrash(new Error('真的炸了'), 'react');
@@ -196,6 +200,7 @@ const records = () => crash.getCrashRecords();
         crash.resetCrashRecords();
         crash.uninstallCrashReporter();
         crash.installCrashReporter();
+        crash.setCrashBannerEnabled(true); // 横幅默认关（v0.6.33 起），取证时显式打开
 
         const reject = (message, stack) => {
             const err = new Error(message);
