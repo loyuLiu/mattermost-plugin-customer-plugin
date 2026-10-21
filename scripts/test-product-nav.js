@@ -67,6 +67,7 @@ const {
     normalizeNavDocument,
     safeNavUrl,
     buildNavContent,
+    applyNavFilter,
     hasNavEntries,
     installNavStyle,
     markSidebarOpen,
@@ -216,6 +217,64 @@ function css() {
     ok(hasNavEntries(null) === false, '数据还没到 -> 不显示按钮');
     ok(buildNavContent(null).textContent.indexOf('暂无产品导航') >= 0, '正文给一句空态文案（而不是空白栏位）');
     ok(buildNavContent({categories: []}).querySelectorAll(LINK).length === 0, '空数据不渲染任何链接');
+
+    console.log('\n[4.5] 搜索框（v0.6.34：按名称/地址就地过滤）');
+    const searchable = buildNavContent(DATA);
+    const box = searchable.querySelector('input.customers-plugin-nav-search');
+    ok(Boolean(box), '正文顶部有一个搜索框');
+    ok(box && box.getAttribute('placeholder') === '搜索产品…', '占位文案写明是搜产品');
+    ok(box && box.getAttribute('aria-label') === '搜索产品', '带 aria-label（读屏器念得出它是干嘛的）');
+    ok(searchable.querySelector('.customers-plugin-nav-no-match').style.display === 'none',
+        '没打字时不显示「没有匹配」');
+    ok(!buildNavContent(null).querySelector('input'), '空态（暂无产品导航）时不放搜索框');
+
+    // 打字 = input 事件触发就地过滤，不重建 DOM（重建会把输入框焦点打掉）。
+    const hide = (el) => el.style.display === 'none';
+    box.value = '知识';
+    box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    const sLinks = Array.from(searchable.querySelectorAll(LINK));
+    ok(hide(sLinks[0]), '打「知识」：工单系统被隐藏');
+    ok(!hide(sLinks[1]), '打「知识」：知识库保留');
+    ok(searchable.querySelectorAll(CATEGORY + ':not([style*="none"])').length === 1,
+        '打「知识」：链接全被滤掉的分类整块隐藏');
+    ok(searchable.querySelector('.customers-plugin-nav-no-match').style.display === 'none',
+        '还有匹配时不显示「没有匹配」');
+
+    // 大小写与地址也能搜。
+    box.value = 'EXAMPLE.ORG';
+    box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    const byUrl = Array.from(searchable.querySelectorAll(LINK));
+    ok(hide(byUrl[0]) && hide(byUrl[1]) && !hide(byUrl[2]), '按地址搜（不区分大小写）也能命中');
+    ok(hide(searchable.querySelectorAll(CATEGORY)[0]),
+        '第一个分类整体被隐藏（它的链接一个都不匹配）');
+
+    box.value = '不存在的产品';
+    box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(Array.from(searchable.querySelectorAll(LINK)).every(hide), '全部不匹配时所有链接都隐藏');
+    ok(searchable.querySelector('.customers-plugin-nav-no-match').style.display !== 'none',
+        '全部不匹配时显示「没有匹配的产品」');
+
+    box.value = '  ';
+    box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(!Array.from(searchable.querySelectorAll(LINK)).some(hide), '清空（纯空白也算）后全部恢复');
+    ok(searchable.querySelector('.customers-plugin-nav-no-match').style.display === 'none',
+        '清空后「没有匹配」也收走');
+
+    // applyNavFilter 直接调用与走事件是同一条路。
+    applyNavFilter(searchable, '工单');
+    ok(hide(searchable.querySelectorAll(LINK)[1]) && hide(searchable.querySelectorAll(LINK)[2]),
+        'applyNavFilter 也能直接过滤（导出的纯函数，事件里调的就是它）');
+
+    // 条目刷新会重建整个正文：打过的搜索词必须活着带到新正文上。
+    const rebuilt = buildNavContent(DATA);
+    const rebuiltBox = rebuilt.querySelector('input.customers-plugin-nav-search');
+    ok(rebuiltBox.value === '  ', '重建后的正文把上一次的搜索词带回输入框');
+    ok(!Array.from(rebuilt.querySelectorAll(LINK)).some(hide), '空白词在新正文上不过滤任何链接');
+    rebuiltBox.value = '官网';
+    rebuiltBox.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(hide(rebuilt.querySelectorAll(LINK)[0]), '新正文上打字照常过滤');
+    box.value = '';
+    box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
 
     console.log('\n[5] 每行 5 个链接');
 

@@ -2,7 +2,7 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.installNavStyle = exports.blurHeaderButtonFocus = exports.exposeHeaderDiagnostic = exports.logHeaderStartupBaseline = exports.logHeaderButtonPaint = exports.noteHeaderRegistration = exports.shouldLogHeaderDiag = exports.headerQuietStyleText = exports.installHeaderButtonQuietStyle = exports.syncHeaderButtonQuietStyle = exports.discoverHeaderButtonDomIds = exports.discoverHeaderButtons = exports.headerIconButtons = exports.HEADER_GLYPH_BULK = exports.HEADER_GLYPH_NAV = exports.HEADER_BUTTON_LABELS = exports.markSidebarOpen = exports.buildNavContent = exports.hasNavEntries = exports.normalizeNavDocument = exports.countUsableNavLinks = exports.collectNavProblems = exports.isBlankNavLink = exports.safeNavUrl = exports.navContentWidthPx = exports.normalizeLinksPerRow = void 0;
+exports.installNavStyle = exports.blurHeaderButtonFocus = exports.exposeHeaderDiagnostic = exports.logHeaderStartupBaseline = exports.logHeaderButtonPaint = exports.noteHeaderRegistration = exports.shouldLogHeaderDiag = exports.headerQuietStyleText = exports.installHeaderButtonQuietStyle = exports.syncHeaderButtonQuietStyle = exports.discoverHeaderButtonDomIds = exports.discoverHeaderButtons = exports.headerIconButtons = exports.HEADER_GLYPH_BULK = exports.HEADER_GLYPH_NAV = exports.HEADER_BUTTON_LABELS = exports.markSidebarOpen = exports.buildNavContent = exports.applyNavFilter = exports.hasNavEntries = exports.normalizeNavDocument = exports.countUsableNavLinks = exports.collectNavProblems = exports.isBlankNavLink = exports.safeNavUrl = exports.navContentWidthPx = exports.normalizeLinksPerRow = void 0;
 const constants_1 = require("./constants");
 const STYLE_ID = 'customers-plugin-product-nav-style';
 const CONTENT_CLASS = 'customers-plugin-nav-content';
@@ -13,6 +13,8 @@ const LINK_CLASS = 'customers-plugin-nav-link';
 const LOGO_CLASS = 'customers-plugin-nav-logo';
 const NAME_CLASS = 'customers-plugin-nav-name';
 const EMPTY_CLASS = 'customers-plugin-nav-empty';
+const SEARCH_CLASS = 'customers-plugin-nav-search';
+const NO_MATCH_CLASS = 'customers-plugin-nav-no-match';
 /**
  * Mark put on <body> while the right-hand sidebar shows the navigation.
  *
@@ -179,6 +181,9 @@ function buildLink(link) {
     anchor.rel = 'noopener noreferrer';
     anchor.setAttribute('role', 'menuitem');
     anchor.dataset.pluginNav = 'link';
+    // The search box matches against this: name first, address second — a link
+    // named by an abbreviation is still findable by the host it points at.
+    anchor.dataset.navSearch = `${(link.name || '')} ${(link.url || '')}`.toLowerCase();
     const logo = document.createElement('span');
     logo.className = LOGO_CLASS;
     const icon = safeNavUrl(link.iconUrl);
@@ -204,6 +209,48 @@ function buildLink(link) {
     return anchor;
 }
 /**
+ * The search text typed into the navigation's own search box.
+ *
+ * The sidebar rebuilds its whole body whenever the entries change — and they change
+ * on every open, because the list is re-fetched then. The box lives inside that body,
+ * so without this its text would be wiped by the very refresh that keeps the list
+ * current. Module-level on purpose: the query should survive as long as the page does.
+ */
+let navSearchQuery = '';
+/**
+ * Shows only the links whose name or address contains the query.
+ *
+ * Runs on the already-built DOM rather than rebuilding it: filtering has to feel
+ * instant while typing, and the search box itself must not lose focus — a rebuild
+ * would replace the element under the user's fingers. A category whose links are
+ * all filtered out is hidden whole, and when nothing at all matches, a note says so.
+ * An empty (or whitespace-only) query restores everything.
+ */
+function applyNavFilter(root, rawQuery) {
+    const query = (rawQuery || '').trim().toLowerCase();
+    let matches = 0;
+    Array.from(root.querySelectorAll(`.${LINK_CLASS}`)).forEach((node) => {
+        const link = node;
+        const haystack = link.dataset.navSearch || '';
+        const hit = !query || haystack.indexOf(query) >= 0;
+        link.style.display = hit ? '' : 'none';
+        if (hit) {
+            matches += 1;
+        }
+    });
+    Array.from(root.querySelectorAll(`.${CATEGORY_CLASS}`)).forEach((node) => {
+        const block = node;
+        const anyVisible = Array.from(block.querySelectorAll(`.${LINK_CLASS}`)).
+            some((link) => link.style.display !== 'none');
+        block.style.display = anyVisible ? '' : 'none';
+    });
+    const note = root.querySelector(`.${NO_MATCH_CLASS}`);
+    if (note) {
+        note.style.display = query && matches === 0 ? '' : 'none';
+    }
+}
+exports.applyNavFilter = applyNavFilter;
+/**
  * The navigation body as plain DOM.
  *
  * The sidebar mounts this rather than rendering a tree of components: Mattermost
@@ -221,6 +268,20 @@ function buildNavContent(data) {
         root.appendChild(empty);
         return root;
     }
+    // The search box sits above the categories, full width. Typing filters the tiles
+    // in place (see `applyNavFilter`); the query is kept module-level so a refresh of
+    // the entries — which rebuilds this whole body — does not wipe what was typed.
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = SEARCH_CLASS;
+    search.placeholder = '搜索产品…';
+    search.setAttribute('aria-label', '搜索产品');
+    search.value = navSearchQuery;
+    search.addEventListener('input', () => {
+        navSearchQuery = search.value;
+        applyNavFilter(root, search.value);
+    });
+    root.appendChild(search);
     categories.forEach((category) => {
         const block = document.createElement('div');
         block.className = CATEGORY_CLASS;
@@ -239,6 +300,18 @@ function buildNavContent(data) {
         block.appendChild(list);
         root.appendChild(block);
     });
+    // Hidden unless a non-empty query has filtered every link away — otherwise the
+    // box would sit over a blank column with no word of why.
+    const noMatch = document.createElement('p');
+    noMatch.className = NO_MATCH_CLASS;
+    noMatch.textContent = '没有匹配的产品。';
+    noMatch.style.display = 'none';
+    root.appendChild(noMatch);
+    // A query carried over from before the rebuild has to take effect on the new
+    // body too, not just sit in the box.
+    if (navSearchQuery.trim()) {
+        applyNavFilter(root, navSearchQuery);
+    }
     return root;
 }
 exports.buildNavContent = buildNavContent;
@@ -270,6 +343,14 @@ exports.markSidebarOpen = markSidebarOpen;
 const CONTENT_CSS = (linksPerRow) => `body.${BODY_OPEN_CLASS} #sidebar-right,body.${BODY_OPEN_CLASS} .sidebar--right{` +
     `min-width:${navContentWidthPx(linksPerRow)}px;}` +
     `.${CONTENT_CLASS}{padding:12px 14px;}` +
+    `.${SEARCH_CLASS}{` +
+    'display:block;width:100%;box-sizing:border-box;margin:0 0 12px;padding:6px 10px;' +
+    'font-size:13px;line-height:18px;font-family:inherit;border-radius:6px;' +
+    'border:1px solid rgba(var(--center-channel-color-rgb,63,67,80),0.24);' +
+    'background:var(--center-channel-bg,#fff);color:inherit;outline:none;' +
+    '}' +
+    `.${SEARCH_CLASS}:focus{border-color:var(--button-bg,#1c58d9);}` +
+    `.${SEARCH_CLASS}::placeholder{color:rgba(var(--center-channel-color-rgb,63,67,80),0.5);}` +
     `.${CATEGORY_CLASS}{margin-bottom:12px;}` +
     `.${CATEGORY_CLASS}:last-child{margin-bottom:0;}` +
     `.${CATEGORY_TITLE_CLASS}{` +
@@ -305,7 +386,8 @@ const CONTENT_CSS = (linksPerRow) => `body.${BODY_OPEN_CLASS} #sidebar-right,bod
     'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;' +
     'max-height:30px;overflow:hidden;overflow-wrap:anywhere;' +
     '}' +
-    `.${EMPTY_CLASS}{margin:0;font-size:13px;color:rgba(var(--center-channel-color-rgb,63,67,80),0.75);}`;
+    `.${EMPTY_CLASS}{margin:0;font-size:13px;color:rgba(var(--center-channel-color-rgb,63,67,80),0.75);}` +
+    `.${NO_MATCH_CLASS}{margin:0;font-size:13px;color:rgba(var(--center-channel-color-rgb,63,67,80),0.75);}`;
 /** The whole stylesheet: the navigation body. */
 function fullCss(linksPerRow) {
     return CONTENT_CSS(linksPerRow);
