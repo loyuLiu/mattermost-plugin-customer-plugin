@@ -104,15 +104,27 @@ const STYLE_ID = 'customers-plugin-product-nav-style';
 const BODY_OPEN_CLASS = 'customers-plugin-nav-rhs-open';
 const LINK = '.customers-plugin-nav-link';
 const CATEGORY = '.customers-plugin-nav-category';
+const CATEGORY_TITLE = '.customers-plugin-nav-category-title';
+const CATEGORY_ICON = '.customers-plugin-nav-category-icon';
 
 const DATA = {
     categories: [
         {
             id: 'cat-1',
             name: '内部系统',
+            iconUrl: 'https://example.com/cat.png',
             links: [
                 {id: 'l1', name: '工单系统', url: 'https://example.com/ticket', iconUrl: 'https://example.com/t.png'},
                 {id: 'l2', name: '知识库', url: 'https://example.com/wiki', iconUrl: ''},
+                {
+                    id: 'l5',
+                    name: '易研方案',
+                    url: 'https://example.com/portal',
+                    subLinks: [
+                        {name: '媒体页', url: 'https://example.com/portal/media'},
+                        {name: '下载页', url: 'https://example.com/portal/download'},
+                    ],
+                },
             ],
         },
         {
@@ -165,6 +177,26 @@ function css() {
         {id: 'd', name: '坏地址', url: 'example.com'},
     ]}]) === 1, '只数服务端会保留的链接');
 
+    console.log('\n[1.55] 子链接校验（同一产品的附加入口）');
+    const subProblems = collectNavProblems([{id: 'c', name: '分类', links: [{
+        id: 'l', name: '工单', url: 'https://e.com', subLinks: [
+            {name: '', url: 'https://e.com/a'},
+            {name: '没有地址', url: ''},
+            {name: '脚本', url: 'javascript:alert(1)'},
+            {name: '正常', url: 'https://e.com/b'},
+        ],
+    }]}]);
+    ok(subProblems.length === 3, '3 条坏子链接各报一条（' + subProblems.length + '）');
+    ok(subProblems[0].indexOf('第 1 个子链接：缺少名称') > 0, '报错指明是第几个子链接');
+    ok(subProblems[1].indexOf('缺少地址') > 0, '缺地址的子链接有报错');
+    ok(subProblems[2].indexOf('javascript:') > 0, '脚本地址的子链接有报错');
+
+    // 一行只有子链接、名称和地址都空着不算空行的问题行？——算空行（新建行的常态）。
+    const blankWithSub = collectNavProblems([{id: 'c', name: '分类', links: [{
+        id: 'l', name: '', url: '', subLinks: [],
+    }]}]);
+    ok(blankWithSub.length === 0, '完全空白的行不报错');
+
     console.log('\n[1.6] normalizeNavDocument（服务端旧数据可能带 null）');
     ok(Array.isArray(normalizeNavDocument(null)) && normalizeNavDocument(null).length === 0, 'null 文档不会炸');
     ok(Array.isArray(normalizeNavDocument(undefined)) && normalizeNavDocument(undefined).length === 0, 'undefined 文档不会炸');
@@ -183,10 +215,25 @@ function css() {
     ok(nullCategory.length === 1 && nullCategory[0].name === '内部', '数组里的 null 分类被跳过');
 
     const filled = normalizeNavDocument({
-        categories: [{id: 'c', name: '内部', links: [{id: 'l', name: '工单', url: 'https://e.com'}]}],
+        categories: [{id: 'c', name: '内部', iconUrl: 'https://e.com/cat.png', links: [{id: 'l', name: '工单', url: 'https://e.com'}]}],
     });
     ok(filled[0].links[0].iconUrl === '', '缺 iconUrl 补空串（不会读到 undefined）');
+    ok(filled[0].iconUrl === 'https://e.com/cat.png', '分类的 iconUrl 原样保留');
     ok(filled[0].links[0].url === 'https://e.com', '正常数据原样保留');
+
+    const noCatIcon = normalizeNavDocument({
+        categories: [{id: 'c', name: '内部', links: []}],
+    });
+    ok(noCatIcon[0].iconUrl === '', '分类缺 iconUrl 也补空串（旧数据是老版本存的）');
+
+    const withSubs = normalizeNavDocument({
+        categories: [{id: 'c', name: '内部', links: [{id: 'l', name: '工单', url: 'https://e.com', subLinks: [
+            {name: '媒体页', url: 'https://e.com/media'},
+        ]}]}, {id: 'c2', name: '旧数据', links: [{id: 'l2', name: '工单', url: 'https://e.com'}]}],
+    });
+    ok(withSubs[0].links[0].subLinks.length === 1 && withSubs[0].links[0].subLinks[0].name === '媒体页',
+        '子链接原样保留');
+    ok(withSubs[1].links[0].subLinks.length === 0, '旧数据没有子链接字段，补成空数组（不读到 undefined）');
 
     console.log('\n[2] 样式表（只有正文；按钮由 Mattermost 渲染）');
     installNavStyle(DEFAULT_PRODUCT_NAV_LINKS_PER_ROW);
@@ -195,6 +242,25 @@ function css() {
     ok(css().indexOf('position:fixed') < 0, '不再注入 position:fixed（正文交给右侧栏托管）');
     ok(css().indexOf(BODY_OPEN_CLASS) >= 0, '样式里带「右侧栏打开」的标记，用来按需加宽栏位');
     ok(css().indexOf('customers-plugin-nav-button') < 0, '不再注入按钮样式（按钮是频道头部的原生按钮）');
+    ok(/body\.customers-plugin-nav-rhs-open \.customers-plugin-nav-sidebar\{[^}]*overflow-y:auto/.test(css()),
+        '侧栏容器自己滚动（内容超长不再被裁掉，10.12 的插件正文没有自带滚动容器）');
+    ok(/body\.customers-plugin-nav-rhs-open \.customers-plugin-nav-sidebar\{[^}]*min-height:0/.test(css()),
+        '带 min-height:0（flex 子项不缩到内容以下，这条没有它滚不起来）');
+    ok(/\.customers-plugin-nav-search\{[^}]*position:sticky/.test(css()),
+        '搜索框吸顶（长列表滚下去还能接着搜）');
+
+    console.log('\n[2.5] 手机端滚动（窄屏外层没有确定高度，正文会撑开而不是滚动）');
+    ok(css().indexOf('@media screen and (max-width: 768px)') >= 0, '样式里有手机断点（768 = Mattermost 自己的分界）');
+    const mobile = css().slice(css().indexOf('@media screen and (max-width: 768px)'));
+    ok(/body\.customers-plugin-nav-rhs-open \.sidebar-right__body\{[^}]*height:calc\(100vh - 56px\)/.test(mobile),
+        '手机上给正文一个视口基准高度（外层高度不确定时它才滚得起来）');
+    ok(/body\.customers-plugin-nav-rhs-open \.sidebar-right__body\{[^}]*max-height:100%/.test(mobile),
+        '带 max-height:100% 兜底（外层其实有确定高度时不会算过头、不会盖到别的区域）');
+    ok(/body\.customers-plugin-nav-rhs-open \.customers-plugin-nav-sidebar\{[^}]*-webkit-overflow-scrolling:touch/.test(mobile),
+        '手机上开了惯性滚动（iOS 否则像卡住）');
+    ok(mobile.indexOf('customers-plugin-nav-sidebar{flex:1 1 auto') >= 0 ||
+        /customers-plugin-nav-sidebar\{[^}]*flex:1 1 auto/.test(mobile),
+        '手机上的正文自己滚动（不是靠页面滚）');
 
     console.log('\n[3] 导航正文构建（右侧栏组件复用的就是它）');
     const content = buildNavContent(DATA);
@@ -203,13 +269,139 @@ function css() {
     ok(content.textContent.indexOf('内部系统') >= 0, '分类名渲染出来了');
 
     const links = content.querySelectorAll(LINK);
-    ok(links.length === 3, '渲染了 3 个链接（恶意链接被过滤）');
+    ok(links.length === 4, '渲染了 4 个链接（恶意链接被过滤）');
     ok(links[0].getAttribute('href') === 'https://example.com/ticket', '链接地址正确');
     ok(links[0].getAttribute('target') === '_blank', '新窗口打开');
     ok(links[0].getAttribute('rel') === 'noopener noreferrer', '带 noopener noreferrer');
     ok(!!links[0].querySelector('img'), '有 logo 的链接渲染 img');
     ok(!links[1].querySelector('img'), '没有 logo 的链接不渲染 img');
     ok(links[1].querySelector('.customers-plugin-nav-logo').textContent === '知', '无 logo 时显示名称首字');
+
+    console.log('\n[3.2] 分类 logo（v0.6.37：分类标题前的小图标）');
+    const titles = content.querySelectorAll(CATEGORY_TITLE);
+    ok(titles.length === 2, '两个分类标题都在');
+    const catImg = titles[0].querySelector('img' + CATEGORY_ICON);
+    ok(Boolean(catImg), '带 logo 的分类标题渲染 img');
+    ok(catImg && catImg.getAttribute('src') === 'https://example.com/cat.png', '分类 logo 地址正确');
+    ok(catImg && catImg.getAttribute('alt') === '', '分类 logo 不带 alt（装饰图，读屏器只念标题）');
+    ok(titles[0].textContent.indexOf('内部系统') >= 0, '标题文字还在（img 旁边是 span 文字）');
+    ok(!titles[1].querySelector('img'), '没有 logo 的分类只渲染文字');
+    ok(content.textContent.indexOf('外部资源') >= 0, '无 logo 分类的标题文字不受影响');
+
+    // logo 404 时退回纯文字标题，不留破图图标。
+    const broken = titles[0].querySelector('img' + CATEGORY_ICON);
+    broken.dispatchEvent(new dom.window.Event('error'));
+    ok(!titles[0].querySelector('img'), '分类 logo 加载失败后退回纯文字（不留破图）');
+    ok(titles[0].textContent.indexOf('内部系统') >= 0, '退回后标题文字还在');
+
+    // 危险地址不许当分类 logo。
+    const evil = buildNavContent({categories: [
+        {id: 'c', name: '坏分类', iconUrl: 'javascript:alert(1)', links: [{id: 'l', name: '工单', url: 'https://e.com'}]},
+    ]});
+    ok(!evil.querySelector(CATEGORY_TITLE + ' img'), 'javascript: 不能当分类 logo');
+
+    ok(css().indexOf('customers-plugin-nav-category-icon') >= 0, '样式表里有分类 logo 的规则');
+
+    console.log('\n[3.3] 一个产品多条链接（v0.6.39：点卡片弹菜单）');
+    const multiData = buildNavContent(DATA);
+    const multi = multiData.querySelectorAll(LINK)[2];
+    ok(multi && multi.tagName === 'DIV', '多链接产品渲染成卡片（div），不是 <a>');
+    ok(multi.getAttribute('role') === 'button', '带 role=button');
+    ok(multi.getAttribute('aria-expanded') === 'false', '初始收起');
+    ok(multi.textContent.indexOf('易研方案') >= 0, '产品名称照常显示');
+    const mChevron = multi.querySelector('.customers-plugin-nav-chevron');
+    ok(Boolean(mChevron), '带展开角标');
+    const mMenu = multi.querySelector('.customers-plugin-nav-submenu');
+    ok(mMenu && mMenu.hidden, '菜单初始隐藏');
+    ok(multi.dataset.pluginNav === 'link', '卡片可寻址（搜索与诊断按这个标记认它）');
+
+    // 单链接产品保持 <a> 直跳。
+    const singleLink = multiData.querySelectorAll(LINK)[0];
+    ok(singleLink.tagName === 'A' && singleLink.getAttribute('href') === 'https://example.com/ticket',
+        '单链接产品仍是 <a>，点击直接跳');
+
+    // 点击展开 / 再点收起。
+    const click = (el) => el.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    click(multi);
+    ok(!mMenu.hidden, '点击卡片展开菜单');
+    ok(multi.getAttribute('aria-expanded') === 'true', 'aria-expanded 跟随展开');
+    const mItems = mMenu.querySelectorAll('a.customers-plugin-nav-submenu-item');
+    ok(mItems.length === 3, '菜单含主链接 + 2 条子链接');
+    ok(mItems[0].getAttribute('href') === 'https://example.com/portal' && mItems[0].textContent.indexOf('主链接') >= 0,
+        '第一项是主链接并带标注');
+    ok(mItems[1].getAttribute('href') === 'https://example.com/portal/media', '子链接地址正确');
+    ok(mItems[1].getAttribute('target') === '_blank', '子链接新窗口打开');
+    click(multi);
+    ok(mMenu.hidden, '再点卡片收起菜单');
+
+    // 同时只展开一张：开第二张，第一张自动收。
+    const twoMulti = buildNavContent({categories: [{id: 'c', name: '分类', links: [
+        {id: 'a', name: '产品A', url: 'https://e.com/a', subLinks: [{name: 'a2', url: 'https://e.com/a/2'}]},
+        {id: 'b', name: '产品B', url: 'https://e.com/b', subLinks: [{name: 'b2', url: 'https://e.com/b/2'}]},
+    ]}]});
+    const tA = twoMulti.querySelectorAll(LINK)[0];
+    const tB = twoMulti.querySelectorAll(LINK)[1];
+    const mA = tA.querySelector('.customers-plugin-nav-submenu');
+    const mB = tB.querySelector('.customers-plugin-nav-submenu');
+    click(tA);
+    ok(!mA.hidden, '第一张展开');
+    click(tB);
+    ok(!mB.hidden && mA.hidden, '开第二张时第一张自动收起');
+
+    // 点菜单项 = 跳转，不再把菜单开开合合。
+    mB.querySelectorAll('a.customers-plugin-nav-submenu-item')[0].
+        dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    ok(mB.hidden, '点菜单项后菜单收起（跳转走，不顺手再弹开）');
+
+    // 点卡片外面收起。
+    click(tB);
+    ok(!mB.hidden, '再次点卡片重新展开');
+    document.body.dispatchEvent(new dom.window.MouseEvent('click', {bubbles: true}));
+    ok(mB.hidden, '点卡片外面收起菜单');
+
+    // 只有一条子链接时不足以弹菜单，回到普通 <a>。
+    const oneSub = buildNavContent({categories: [{id: 'c', name: '分类', links: [
+        {id: 'a', name: '产品', url: 'https://e.com', subLinks: [{name: '唯一', url: 'javascript:alert(1)'}]},
+    ]}]});
+    ok(oneSub.querySelectorAll(LINK)[0].tagName === 'A',
+        '子链接被清洗到不足 2 条时，仍是普通直跳卡片');
+
+    console.log('\n[3.4] 分类分割线（v0.6.38：若隐若现，上下留白大）');
+    const divider = css().match(/\.customers-plugin-nav-category \+ \.customers-plugin-nav-category\{[^}]*\}/);
+    ok(Boolean(divider), '分隔线规则写在相邻分类上（第一个分类顶上没有线）');
+    ok(divider && divider[0].indexOf('border-top:1px solid') >= 0, '线是 1px 的 border-top');
+    ok(divider && /border-top:1px solid rgba\([^\n]*0\.07\)/.test(divider[0]), '颜色极淡（0.07 透明度，若隐若现）');
+    ok(divider && divider[0].indexOf('margin-top:14px;padding-top:14px') >= 0, '线上下各留 14px 空气');
+
+    console.log('\n[3.45] 分类产品计数（v0.6.40：标题后的小徽标，搜索时跟数）');
+    const cntContent = buildNavContent(DATA);
+    const cntBlocks = cntContent.querySelectorAll(CATEGORY);
+    const cntBadges = cntContent.querySelectorAll('.customers-plugin-nav-category-count');
+    ok(cntBadges.length === 2, '两个分类都有计数徽标');
+    ok(cntBadges[0].textContent === '3' && cntBadges[1].textContent === '1',
+        '计数 = 分类里的产品数（服务端会过滤掉的坏链接不算）');
+    ok(cntBlocks[0].dataset.navTotal === '3', '总数记在分类节点上（搜索收场要还回这个数）');
+    const cntBox = cntContent.querySelector('input.customers-plugin-nav-search');
+    cntBox.value = '知识';
+    cntBox.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(cntBadges[0].textContent === '1', '搜索时徽标显示该分类的匹配数');
+    cntBox.value = '';
+    cntBox.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(cntBadges[0].textContent === '3', '清空搜索恢复总数');
+    ok(css().indexOf('customers-plugin-nav-category-count') >= 0, '样式表里有计数徽标规则');
+
+    console.log('\n[3.5] 搜索时分割线的边角');
+    const divContent = buildNavContent(DATA);
+    const divBox = divContent.querySelector('input.customers-plugin-nav-search');
+    const divBlocks = divContent.querySelectorAll(CATEGORY);
+    divBox.value = '知识';
+    divBox.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(divBlocks[0].style.borderTopWidth === '0px' || divBlocks[0].style.borderTopWidth === '0',
+        '搜索时第一条可见分类不带分割线（它前面的分类被隐藏了，CSS 却看不见 display:none）');
+    divBox.value = '';
+    divBox.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
+    ok(divBlocks[0].style.borderTopWidth === '' && divBlocks[1].style.borderTopWidth === '',
+        '清空搜索后分割线交还给样式表规则');
 
     console.log('\n[4] 没有条目时不注册按钮');
     ok(hasNavEntries(DATA) === true, '有条目 -> 显示按钮');
@@ -244,7 +436,7 @@ function css() {
     box.value = 'EXAMPLE.ORG';
     box.dispatchEvent(new dom.window.Event('input', {bubbles: true}));
     const byUrl = Array.from(searchable.querySelectorAll(LINK));
-    ok(hide(byUrl[0]) && hide(byUrl[1]) && !hide(byUrl[2]), '按地址搜（不区分大小写）也能命中');
+    ok(hide(byUrl[0]) && hide(byUrl[1]) && hide(byUrl[2]) && !hide(byUrl[3]), '按地址搜（不区分大小写）也能命中');
     ok(hide(searchable.querySelectorAll(CATEGORY)[0]),
         '第一个分类整体被隐藏（它的链接一个都不匹配）');
 
@@ -264,6 +456,13 @@ function css() {
     applyNavFilter(searchable, '工单');
     ok(hide(searchable.querySelectorAll(LINK)[1]) && hide(searchable.querySelectorAll(LINK)[2]),
         'applyNavFilter 也能直接过滤（导出的纯函数，事件里调的就是它）');
+
+    // 子链接名称也能搜到产品卡片。
+    applyNavFilter(searchable, '媒体页');
+    const sAll = Array.from(searchable.querySelectorAll(LINK));
+    ok(!hide(sAll[2]) && [0, 1, 3].every((i) => hide(sAll[i])),
+        '按子链接名称搜，能带出产品卡片（其他产品隐藏）');
+    applyNavFilter(searchable, '');
 
     // 条目刷新会重建整个正文：打过的搜索词必须活着带到新正文上。
     const rebuilt = buildNavContent(DATA);

@@ -236,6 +236,84 @@ func TestNormalizeNavigation(t *testing.T) {
 		navEq(t, "link kept", 1, len(out.Categories[0].Links))
 		navEq(t, "icon dropped", "", out.Categories[0].Links[0].IconURL)
 	})
+
+	t.Run("category icon url is sanitised like a link logo", func(t *testing.T) {
+		out := normalizeNavigation(&navigationDocument{
+			Categories: []NavCategory{
+				{
+					Name:    "好的",
+					IconURL: " https://example.com/cat.png ",
+					Links:   []NavLink{{Name: "工单", URL: "https://example.com"}},
+				},
+				{
+					Name:    "坏的",
+					IconURL: "javascript:alert(1)",
+					Links:   []NavLink{{Name: "工单", URL: "https://example.com"}},
+				},
+				{
+					Name:  "没有的",
+					Links: []NavLink{{Name: "工单", URL: "https://example.com"}},
+				},
+			},
+		})
+
+		navEq(t, "good icon kept and trimmed", "https://example.com/cat.png", out.Categories[0].IconURL)
+		navEq(t, "script icon dropped", "", out.Categories[1].IconURL)
+		navEq(t, "missing icon is empty", "", out.Categories[2].IconURL)
+		navEq(t, "categories all kept", 3, len(out.Categories))
+	})
+
+	t.Run("sub links are sanitised and capped", func(t *testing.T) {
+		out := normalizeNavigation(&navigationDocument{
+			Categories: []NavCategory{{
+				Name: "内部系统",
+				Links: []NavLink{{
+					Name: "產品導航",
+					URL:  "https://example.com/products",
+					SubLinks: []SubLink{
+						{Name: "列表页", URL: " https://example.com/products "},
+						{Name: "脚本入口", URL: "javascript:alert(1)"},
+						{Name: "", URL: "https://example.com/x"},
+						{Name: "没有地址", URL: ""},
+						{Name: "媒体页", URL: "https://example.com/media"},
+					},
+				}},
+			}},
+		})
+
+		link := out.Categories[0].Links[0]
+		navEq(t, "usable sub links kept", 2, len(link.SubLinks))
+		navEq(t, "first kept", "列表页", link.SubLinks[0].Name)
+		navEq(t, "url trimmed", "https://example.com/products", link.SubLinks[0].URL)
+		navEq(t, "second kept", "媒体页", link.SubLinks[1].Name)
+	})
+
+	t.Run("sub links are capped", func(t *testing.T) {
+		subs := make([]SubLink, 0, maxNavSubLinks+5)
+		for i := 0; i < maxNavSubLinks+5; i++ {
+			subs = append(subs, SubLink{Name: "s", URL: "https://example.com"})
+		}
+
+		out := normalizeNavigation(&navigationDocument{
+			Categories: []NavCategory{{
+				Name:  "内部系统",
+				Links: []NavLink{{Name: "工单", URL: "https://example.com", SubLinks: subs}},
+			}},
+		})
+
+		navEq(t, "sub links capped", maxNavSubLinks, len(out.Categories[0].Links[0].SubLinks))
+	})
+
+	t.Run("a document without sub links keeps working", func(t *testing.T) {
+		out := normalizeNavigation(&navigationDocument{
+			Categories: []NavCategory{{
+				Name:  "内部系统",
+				Links: []NavLink{{Name: "工单", URL: "https://example.com"}},
+			}},
+		})
+
+		navEq(t, "no sub links", 0, len(out.Categories[0].Links[0].SubLinks))
+	})
 }
 
 func TestNormalizeNavigationAlwaysEmitsArrays(t *testing.T) {

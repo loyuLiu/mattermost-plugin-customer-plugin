@@ -104,6 +104,12 @@ export type ServerConfig = {
     productNav?: ProductNavSettings;
 };
 
+/** One additional entry of a product that lives on several addresses. */
+export type NavSubLink = {
+    name: string;
+    url: string;
+};
+
 /** One entry of the product navigation panel. */
 export type NavLink = {
     id: string;
@@ -112,12 +118,27 @@ export type NavLink = {
 
     /** Logo shown next to the caption. Empty means "draw the fallback tile". */
     iconUrl?: string;
+
+    /**
+     * Additional entries of the same product. The tile jumps to `url` while these
+     * are absent or filter down to fewer than two; with two or more usable entries
+     * left the tile opens a small menu instead. Absent on documents saved by older
+     * builds — that is the same as "no sub-links".
+     */
+    subLinks?: NavSubLink[];
 };
 
 /** A named group of links. */
 export type NavCategory = {
     id: string;
     name: string;
+
+    /**
+     * Small logo rendered before the heading. Empty means "heading text only".
+     * Absent on documents saved by older builds, in which case it is the same.
+     */
+    iconUrl?: string;
+
     links: NavLink[];
 };
 

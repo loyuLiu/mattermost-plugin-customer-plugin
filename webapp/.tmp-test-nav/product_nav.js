@@ -8,13 +8,25 @@ const STYLE_ID = 'customers-plugin-product-nav-style';
 const CONTENT_CLASS = 'customers-plugin-nav-content';
 const CATEGORY_CLASS = 'customers-plugin-nav-category';
 const CATEGORY_TITLE_CLASS = 'customers-plugin-nav-category-title';
+const CATEGORY_ICON_CLASS = 'customers-plugin-nav-category-icon';
+const CATEGORY_COUNT_CLASS = 'customers-plugin-nav-category-count';
 const LINKS_CLASS = 'customers-plugin-nav-links';
 const LINK_CLASS = 'customers-plugin-nav-link';
+const LINK_MULTI_CLASS = 'customers-plugin-nav-link--multi';
+const LINK_OPEN_CLASS = 'customers-plugin-nav-link--open';
+const CHEVRON_CLASS = 'customers-plugin-nav-chevron';
+const SUBMENU_CLASS = 'customers-plugin-nav-submenu';
+const SUBMENU_ITEM_CLASS = 'customers-plugin-nav-submenu-item';
 const LOGO_CLASS = 'customers-plugin-nav-logo';
 const NAME_CLASS = 'customers-plugin-nav-name';
 const EMPTY_CLASS = 'customers-plugin-nav-empty';
 const SEARCH_CLASS = 'customers-plugin-nav-search';
 const NO_MATCH_CLASS = 'customers-plugin-nav-no-match';
+/**
+ * Class of the div the sidebar component mounts as, inside Mattermost's
+ * `.sidebar-right__body`.
+ */
+const SIDEBAR_HOST_CLASS = 'customers-plugin-nav-sidebar';
 /**
  * Mark put on <body> while the right-hand sidebar shows the navigation.
  *
@@ -30,6 +42,8 @@ const LINK_GAP_PX = 6;
 const CONTENT_PADDING_X_PX = 14;
 /** Narrowest tile that still holds a 32px logo and a readable caption. */
 const LINK_MIN_WIDTH_PX = 56;
+/** Widest screen Mattermost still lays out as a phone (its own breakpoint). */
+const MOBILE_MAX_WIDTH_PX = 768;
 /**
  * Clamps an administrator-supplied row size into something renderable.
  *
@@ -95,7 +109,8 @@ function safeNavUrl(raw) {
 exports.safeNavUrl = safeNavUrl;
 /** A row the administrator has not typed anything into yet. */
 function isBlankNavLink(link) {
-    return !(link.name || '').trim() && !(link.url || '').trim() && !(link.iconUrl || '').trim();
+    return !(link.name || '').trim() && !(link.url || '').trim() && !(link.iconUrl || '').trim() &&
+        !(link.subLinks || []).some((sub) => (sub.name || '').trim() || (sub.url || '').trim());
 }
 exports.isBlankNavLink = isBlankNavLink;
 /**
@@ -126,6 +141,20 @@ function collectNavProblems(categories) {
             if (!safeNavUrl(url)) {
                 problems.push(`${at}：地址「${url}」不可用，必须填 https:// 开头或 / 开头的站点相对路径`);
             }
+            (link.subLinks || []).forEach((sub, subIndex) => {
+                const subAt = `${at} 第 ${subIndex + 1} 个子链接`;
+                if (!(sub.name || '').trim()) {
+                    problems.push(`${subAt}：缺少名称`);
+                }
+                const subUrl = (sub.url || '').trim();
+                if (!subUrl) {
+                    problems.push(`${subAt}：缺少地址`);
+                    return;
+                }
+                if (!safeNavUrl(subUrl)) {
+                    problems.push(`${subAt}：地址「${subUrl}」不可用，必须填 https:// 开头或 / 开头的站点相对路径`);
+                }
+            });
         });
     });
     return problems;
@@ -147,11 +176,16 @@ function normalizeNavDocument(document) {
     return raw.filter((category) => Boolean(category)).map((category) => ({
         id: category.id || '',
         name: category.name || '',
+        iconUrl: category.iconUrl || '',
         links: (Array.isArray(category.links) ? category.links : []).map((link) => ({
             id: link.id || '',
             name: link.name || '',
             url: link.url || '',
             iconUrl: link.iconUrl || '',
+            subLinks: (Array.isArray(link.subLinks) ? link.subLinks : []).map((sub) => ({
+                name: sub.name || '',
+                url: sub.url || '',
+            })),
         })),
     }));
 }
@@ -169,21 +203,108 @@ function fallbackGlyph(name) {
     const trimmed = (name || '').trim();
     return trimmed ? Array.from(trimmed)[0].toUpperCase() : '?';
 }
+/**
+ * The sub-links of a product that survive `safeNavUrl` and have a caption.
+ *
+ * Everything the menu shows has to pass the same gates the server applies on the way
+ * in; a draft being edited in the panel never reaches this code, but a document from
+ * an older build might still carry something odd.
+ */
+function usableSubLinks(link) {
+    return (link.subLinks || []).filter((sub) => (sub.name || '').trim() && safeNavUrl(sub.url)).
+        map((sub) => ({ name: (sub.name || '').trim(), url: safeNavUrl(sub.url) }));
+}
+/** The search haystack of one tile: the product's name and every entry it carries. */
+function navSearchText(link) {
+    const parts = [link.name || '', link.url || ''];
+    (link.subLinks || []).forEach((sub) => {
+        parts.push(sub.name || '', sub.url || '');
+    });
+    return parts.join(' ').toLowerCase();
+}
+/**
+ * The one multi-entry tile whose menu is open, if any.
+ *
+ * Only one menu shows at a time; opening a tile closes the previous one. A single
+ * module slot is enough — the sidebar can only show one navigation body, and a body
+ * rebuild simply drops the old nodes.
+ */
+let openMultiTile = null;
+function setMultiTileOpen(open, host) {
+    if (openMultiTile && openMultiTile !== open) {
+        openMultiTile.menu.hidden = true;
+        openMultiTile.tile.classList.remove(LINK_OPEN_CLASS);
+        openMultiTile.tile.setAttribute('aria-expanded', 'false');
+        openMultiTile.menu.style.marginLeft = '';
+    }
+    openMultiTile = open;
+    if (openMultiTile) {
+        openMultiTile.menu.hidden = false;
+        openMultiTile.tile.classList.add(LINK_OPEN_CLASS);
+        openMultiTile.tile.setAttribute('aria-expanded', 'true');
+        // The menu is centered on its tile, but a narrow tile near the edge of the
+        // column would push half of it outside the scroll container — where
+        // `overflow-x: hidden` clips it. Nudge it back inside once it has a size.
+        if (host) {
+            const hostRect = host.getBoundingClientRect();
+            const rect = openMultiTile.menu.getBoundingClientRect();
+            if (hostRect.width && rect.width) {
+                let shift = 0;
+                if (rect.left < hostRect.left) {
+                    shift = hostRect.left - rect.left;
+                }
+                else if (rect.right > hostRect.right) {
+                    shift = hostRect.right - rect.right;
+                }
+                openMultiTile.menu.style.marginLeft = shift ? `${Math.round(shift)}px` : '';
+            }
+        }
+    }
+}
+/** Outside clicks close the open menu; the listener is installed once per page. */
+let multiTileOutsideClickInstalled = false;
+function ensureMultiTileOutsideClick() {
+    if (multiTileOutsideClickInstalled || typeof document === 'undefined') {
+        return;
+    }
+    document.addEventListener('click', (event) => {
+        if (openMultiTile && !openMultiTile.tile.contains(event.target)) {
+            setMultiTileOpen(null, null);
+        }
+    });
+    multiTileOutsideClickInstalled = true;
+}
 function buildLink(link) {
     const url = safeNavUrl(link.url);
     if (!url) {
         return null;
     }
-    const anchor = document.createElement('a');
-    anchor.className = LINK_CLASS;
-    anchor.href = url;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    anchor.setAttribute('role', 'menuitem');
+    const subs = usableSubLinks(link);
+    // Multi means "more than one door": the main address plus at least one usable
+    // sub-link. A sub-link list that sanitised down to nothing leaves a plain tile.
+    const multi = subs.length >= 1;
+    let anchor;
+    if (multi) {
+        const tile = document.createElement('div');
+        tile.setAttribute('role', 'button');
+        tile.tabIndex = 0;
+        tile.setAttribute('aria-haspopup', 'true');
+        tile.setAttribute('aria-expanded', 'false');
+        anchor = tile;
+    }
+    else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.setAttribute('role', 'menuitem');
+        anchor = a;
+    }
+    anchor.className = LINK_CLASS + (multi ? ` ${LINK_MULTI_CLASS}` : '');
+    // The search box matches against this: the product's own caption and address
+    // first, then every sub-entry — a product is findable by any of its doors.
     anchor.dataset.pluginNav = 'link';
-    // The search box matches against this: name first, address second — a link
-    // named by an abbreviation is still findable by the host it points at.
-    anchor.dataset.navSearch = `${(link.name || '')} ${(link.url || '')}`.toLowerCase();
+    anchor.dataset.navSearch = navSearchText(link);
     const logo = document.createElement('span');
     logo.className = LOGO_CLASS;
     const icon = safeNavUrl(link.iconUrl);
@@ -206,6 +327,58 @@ function buildLink(link) {
     name.title = link.name || '';
     anchor.appendChild(logo);
     anchor.appendChild(name);
+    // A product with two or more usable entries opens a menu instead of jumping:
+    // the tile itself carries the first entry ("主链接"), the menu lists everything.
+    if (multi) {
+        const chevron = document.createElement('span');
+        chevron.className = CHEVRON_CLASS;
+        anchor.appendChild(chevron);
+        const menu = document.createElement('div');
+        menu.className = SUBMENU_CLASS;
+        menu.hidden = true;
+        const entries = [{ name: `${link.name || ''}（主链接）`.trim(), url }, ...subs];
+        entries.forEach((entry) => {
+            const item = document.createElement('a');
+            item.className = SUBMENU_ITEM_CLASS;
+            item.href = entry.url;
+            item.target = '_blank';
+            item.rel = 'noopener noreferrer';
+            item.textContent = entry.name || fallbackGlyph(link.name);
+            item.title = entry.name || '';
+            menu.appendChild(item);
+        });
+        anchor.appendChild(menu);
+        const host = () => anchor.closest(`.${CONTENT_CLASS}`);
+        const toggle = () => {
+            if (openMultiTile && openMultiTile.tile === anchor) {
+                setMultiTileOpen(null, null);
+            }
+            else {
+                setMultiTileOpen({ tile: anchor, menu }, host());
+            }
+        };
+        anchor.addEventListener('click', (event) => {
+            // A click on a menu entry is a navigation; it must not also close-and-
+            // reopen the menu on its way out.
+            const target = event.target;
+            if (target !== anchor && target.nodeName === 'A') {
+                setMultiTileOpen(null, null);
+                return;
+            }
+            event.preventDefault();
+            toggle();
+        });
+        anchor.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggle();
+            }
+            else if (event.key === 'Escape' && openMultiTile && openMultiTile.tile === anchor) {
+                setMultiTileOpen(null, null);
+            }
+        });
+        ensureMultiTileOutsideClick();
+    }
     return anchor;
 }
 /**
@@ -238,11 +411,30 @@ function applyNavFilter(root, rawQuery) {
             matches += 1;
         }
     });
+    // Same edge case for the divider: the CSS rule is `previous sibling + this one`,
+    // and CSS only looks at the DOM, not at what is displayed — a category whose
+    // predecessor was filtered away would otherwise carry a divider at the very top,
+    // right under the search box. The first visible one drops its line while a query
+    // is active; an empty query clears the override so the stylesheet rules again.
+    let firstVisible = true;
     Array.from(root.querySelectorAll(`.${CATEGORY_CLASS}`)).forEach((node) => {
         const block = node;
-        const anyVisible = Array.from(block.querySelectorAll(`.${LINK_CLASS}`)).
-            some((link) => link.style.display !== 'none');
+        const tiles = Array.from(block.querySelectorAll(`.${LINK_CLASS}`));
+        const anyVisible = tiles.some((link) => link.style.display !== 'none');
         block.style.display = anyVisible ? '' : 'none';
+        if (anyVisible) {
+            block.style.borderTopWidth = query && firstVisible ? '0' : '';
+            firstVisible = false;
+        }
+        // The count badge follows the search: with a query active it shows how many
+        // of the category's products still match, which turns it from decoration
+        // into an answer to "where did everything go". No query — back to the total.
+        const count = block.querySelector(`.${CATEGORY_COUNT_CLASS}`);
+        if (count) {
+            const total = Number(block.dataset.navTotal || '0');
+            const shown = tiles.filter((link) => link.style.display !== 'none').length;
+            count.textContent = String(query ? shown : total);
+        }
     });
     const note = root.querySelector(`.${NO_MATCH_CLASS}`);
     if (note) {
@@ -287,8 +479,23 @@ function buildNavContent(data) {
         block.className = CATEGORY_CLASS;
         const title = document.createElement('h4');
         title.className = CATEGORY_TITLE_CLASS;
-        title.textContent = category.name || '';
-        block.appendChild(title);
+        const catIcon = safeNavUrl(category.iconUrl);
+        if (catIcon) {
+            const image = document.createElement('img');
+            image.className = CATEGORY_ICON_CLASS;
+            image.src = catIcon;
+            image.alt = '';
+            // A broken category logo degrades to the plain heading rather than
+            // leaving a torn-image glyph next to it — same deal as the link logos.
+            // Removing just the image keeps the text and the count badge intact.
+            image.addEventListener('error', () => {
+                image.remove();
+            });
+            title.appendChild(image);
+        }
+        const titleText = document.createElement('span');
+        titleText.textContent = category.name || '';
+        title.appendChild(titleText);
         const list = document.createElement('div');
         list.className = LINKS_CLASS;
         (category.links || []).forEach((link) => {
@@ -297,6 +504,15 @@ function buildNavContent(data) {
                 list.appendChild(anchor);
             }
         });
+        // The product count, right after the heading. Search rewrites it on the fly
+        // (see `applyNavFilter`); `navTotal` is what an empty query restores to.
+        const total = list.childElementCount;
+        block.dataset.navTotal = String(total);
+        const count = document.createElement('span');
+        count.className = CATEGORY_COUNT_CLASS;
+        count.textContent = String(total);
+        title.appendChild(count);
+        block.appendChild(title);
         block.appendChild(list);
         root.appendChild(block);
     });
@@ -342,20 +558,73 @@ exports.markSidebarOpen = markSidebarOpen;
  */
 const CONTENT_CSS = (linksPerRow) => `body.${BODY_OPEN_CLASS} #sidebar-right,body.${BODY_OPEN_CLASS} .sidebar--right{` +
     `min-width:${navContentWidthPx(linksPerRow)}px;}` +
+    // Scrolling. Mattermost drops the pluggable body into `.sidebar-right__body`
+    // (a flex column of fixed height) with no scroll wrapper of its own — every
+    // first-party RHS view wraps itself in one, the pluggable one does not — so a
+    // directory longer than the column either clips or spills. The fix stays on our
+    // div: let it claim the space left under the title (`flex:1` plus the
+    // `min-height:0` that stops a flex item from refusing to shrink below its
+    // content) and scroll inside itself. Gated on the open class, so it only ever
+    // applies while this sidebar is the one showing.
+    `body.${BODY_OPEN_CLASS} .${SIDEBAR_HOST_CLASS}{` +
+    'flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;' +
+    'overscroll-behavior:contain;' +
+    '}' +
+    // Mobile. Same idea, but the ancestor chain is what breaks there: on a narrow
+    // screen `#root` is `min-height:100%` with `overflow-y:visible`, so the height
+    // the body asks for — `calc(100% - 56px)` — resolves against nothing and falls
+    // back to auto. The body then grows with the content instead of scrolling it,
+    // and the column under it simply runs off the screen. Giving the body a
+    // viewport-based height makes it definite again; `max-height:100%` is the brake
+    // for the layouts where the ancestor *does* have a height, so the panel never
+    // ends up taller than the space it was given.
+    `@media screen and (max-width: ${MOBILE_MAX_WIDTH_PX}px){` +
+    `body.${BODY_OPEN_CLASS} .sidebar-right__body{` +
+    'height:calc(100vh - 56px);max-height:100%;overflow:hidden;' +
+    '}' +
+    `body.${BODY_OPEN_CLASS} .${SIDEBAR_HOST_CLASS}{` +
+    'flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;' +
+    // iOS: without this the panel scrolls but keeps no momentum, which reads as
+    // "it is stuck" on a phone.
+    '-webkit-overflow-scrolling:touch;overscroll-behavior:contain;' +
+    '}' +
+    '}' +
     `.${CONTENT_CLASS}{padding:12px 14px;}` +
     `.${SEARCH_CLASS}{` +
     'display:block;width:100%;box-sizing:border-box;margin:0 0 12px;padding:6px 10px;' +
     'font-size:13px;line-height:18px;font-family:inherit;border-radius:6px;' +
     'border:1px solid rgba(var(--center-channel-color-rgb,63,67,80),0.24);' +
     'background:var(--center-channel-bg,#fff);color:inherit;outline:none;' +
+    // The list scrolls under the search box now; a long directory would otherwise
+    // carry the box out of view just when it is most needed.
+    'position:sticky;top:0;z-index:2;' +
     '}' +
     `.${SEARCH_CLASS}:focus{border-color:var(--button-bg,#1c58d9);}` +
     `.${SEARCH_CLASS}::placeholder{color:rgba(var(--center-channel-color-rgb,63,67,80),0.5);}` +
-    `.${CATEGORY_CLASS}{margin-bottom:12px;}` +
+    `.${CATEGORY_CLASS}{margin:0 0 14px;}` +
     `.${CATEGORY_CLASS}:last-child{margin-bottom:0;}` +
+    // The divider between categories. Kept as a hairline at very low alpha with a
+    // lot of air on both sides (14px above + 14px below): present enough to group,
+    // faint enough to disappear into the background — the "barely there" line.
+    `.${CATEGORY_CLASS} + .${CATEGORY_CLASS}{` +
+    'margin-top:14px;padding-top:14px;' +
+    'border-top:1px solid rgba(var(--center-channel-color-rgb,63,67,80),0.07);' +
+    '}' +
     `.${CATEGORY_TITLE_CLASS}{` +
+    'display:flex;align-items:center;gap:6px;' +
     'margin:0 0 6px;font-size:12px;font-weight:600;line-height:16px;' +
     'color:rgba(var(--center-channel-color-rgb,63,67,80),0.75);' +
+    '}' +
+    `.${CATEGORY_ICON_CLASS}{` +
+    'width:16px;height:16px;flex:none;border-radius:4px;object-fit:contain;' +
+    '}' +
+    // The product count after the heading. Same quietness as the heading itself —
+    // a soft pill, no border, barely a step above the background.
+    `.${CATEGORY_COUNT_CLASS}{` +
+    'flex:none;padding:0 6px;border-radius:8px;' +
+    'font-size:11px;font-weight:400;line-height:14px;' +
+    'background:rgba(var(--center-channel-color-rgb,63,67,80),0.08);' +
+    'color:rgba(var(--center-channel-color-rgb,63,67,80),0.6);' +
     '}' +
     // A grid rather than `flex-wrap`: wrapping depends on the intrinsic width of
     // each tile, so the row count drifted with the length of the captions. With
@@ -370,6 +639,30 @@ const CONTENT_CSS = (linksPerRow) => `body.${BODY_OPEN_CLASS} #sidebar-right,bod
     'color:inherit;box-sizing:border-box;' +
     '}' +
     `.${LINK_CLASS}:hover{background:rgba(var(--center-channel-color-rgb,63,67,80),0.08);}` +
+    // A product carrying several entries. The tile is a button, not an anchor; the
+    // chevron in the corner says "this opens a list" without costing a word.
+    `.${LINK_MULTI_CLASS}{position:relative;cursor:pointer;}` +
+    `.${LINK_MULTI_CLASS}.${LINK_OPEN_CLASS}{background:rgba(var(--center-channel-color-rgb,63,67,80),0.08);}` +
+    `.${CHEVRON_CLASS}{` +
+    'position:absolute;top:5px;right:6px;width:0;height:0;' +
+    'border-left:4px solid transparent;border-right:4px solid transparent;' +
+    'border-top:5px solid rgba(var(--center-channel-color-rgb,63,67,80),0.4);' +
+    '}' +
+    // The menu overlays the neighbouring tiles, so it is wider than its tile; the
+    // edge tiles get nudged back inside the column from JS after opening.
+    `.${SUBMENU_CLASS}{` +
+    'position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);' +
+    'z-index:10;min-width:160px;max-width:260px;padding:4px 0;' +
+    'background:var(--center-channel-bg,#fff);' +
+    'border:1px solid rgba(var(--center-channel-color-rgb,63,67,80),0.16);' +
+    'border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,0.18);' +
+    '}' +
+    `.${SUBMENU_ITEM_CLASS}{` +
+    'display:block;padding:6px 12px;font-size:12px;line-height:16px;' +
+    'color:inherit;text-decoration:none;white-space:nowrap;' +
+    'overflow:hidden;text-overflow:ellipsis;' +
+    '}' +
+    `.${SUBMENU_ITEM_CLASS}:hover{background:rgba(var(--center-channel-color-rgb,63,67,80),0.08);}` +
     `.${LOGO_CLASS}{` +
     'display:flex;align-items:center;justify-content:center;' +
     'width:32px;height:32px;border-radius:8px;overflow:hidden;flex:none;' +

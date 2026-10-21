@@ -36,7 +36,19 @@ const (
 
 	// Default name of a category the administrator did not name.
 	defaultNavCategoryName = "未命名分类"
+
+	// Most entries one product may carry. A directory of internal systems does not
+	// need more; the cap only ever trips on a paste accident.
+	maxNavSubLinks = 10
 )
+
+// SubLink is one additional entry of a product that lives on several addresses.
+// It carries no logo of its own: the product's tile already has one, and the
+// sub-link menu is a list of captions.
+type SubLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
 
 // NavLink is one entry of the navigation panel.
 type NavLink struct {
@@ -52,12 +64,24 @@ type NavLink struct {
 	// IconURL is the logo rendered next to the caption. Empty means "use the fallback
 	// tile with the first character of the name".
 	IconURL string `json:"iconUrl,omitempty"`
+
+	// SubLinks are the additional entries of the same product. The tile keeps jumping
+	// to `URL` when they are absent or filtered down to nothing; with two or more
+	// usable entries left the tile opens a small menu instead. Absent on documents
+	// saved by older builds — that is the same as "no sub-links".
+	SubLinks []SubLink `json:"subLinks,omitempty"`
 }
 
 // NavCategory groups links under a heading.
 type NavCategory struct {
-	ID    string    `json:"id"`
-	Name  string    `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+
+	// IconURL is the small logo rendered before the heading. Empty means "heading
+	// text only". It goes through the same sanitising as a link's logo, because it
+	// ends up in the `src` of an image on every user's screen.
+	IconURL string `json:"iconUrl,omitempty"`
+
 	Links []NavLink `json:"links"`
 }
 
@@ -228,9 +252,10 @@ func normalizeNavigation(doc *navigationDocument) *navigationDocument {
 		}
 
 		cat := NavCategory{
-			ID:    navID(category.ID),
-			Name:  cleanNavName(category.Name, defaultNavCategoryName),
-			Links: []NavLink{},
+			ID:      navID(category.ID),
+			Name:    cleanNavName(category.Name, defaultNavCategoryName),
+			IconURL: sanitizeNavURL(category.IconURL),
+			Links:   []NavLink{},
 		}
 
 		for _, link := range category.Links {
@@ -244,11 +269,29 @@ func normalizeNavigation(doc *navigationDocument) *navigationDocument {
 				continue
 			}
 
+			// A sub-link with no usable caption or target is dropped whole: half a
+			// menu entry ("a name that goes nowhere") is worse than none.
+			subLinks := []SubLink{}
+			for _, sub := range link.SubLinks {
+				if len(subLinks) >= maxNavSubLinks {
+					break
+				}
+
+				subURL := sanitizeNavURL(sub.URL)
+				subName := cleanNavName(sub.Name, "")
+				if subURL == "" || subName == "" {
+					continue
+				}
+
+				subLinks = append(subLinks, SubLink{Name: subName, URL: subURL})
+			}
+
 			cat.Links = append(cat.Links, NavLink{
-				ID:      navID(link.ID),
-				Name:    name,
-				URL:     url,
-				IconURL: sanitizeNavURL(link.IconURL),
+				ID:       navID(link.ID),
+				Name:     name,
+				URL:      url,
+				IconURL:  sanitizeNavURL(link.IconURL),
+				SubLinks: subLinks,
 			})
 		}
 

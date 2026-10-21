@@ -12,7 +12,7 @@ import {useServerConfig} from '../hooks';
 import {collectNavProblems, countUsableNavLinks, normalizeNavDocument} from '../product_nav';
 import {fetchNavigation, saveNavigation} from '../product_nav_api';
 import {resolveProductNav} from '../resolve';
-import type {NavCategory, NavLink} from '../types/config';
+import type {NavCategory, NavLink, NavSubLink} from '../types/config';
 
 /** Local ids only need to be unique within one editing session. */
 let idSeq = 0;
@@ -22,11 +22,11 @@ function newId(prefix: string): string {
 }
 
 function emptyLink(): NavLink {
-    return {id: newId('link'), name: '', url: '', iconUrl: ''};
+    return {id: newId('link'), name: '', url: '', iconUrl: '', subLinks: []};
 }
 
 function emptyCategory(): NavCategory {
-    return {id: newId('cat'), name: '', links: [emptyLink()]};
+    return {id: newId('cat'), name: '', iconUrl: '', links: [emptyLink()]};
 }
 
 const blockStyle: React.CSSProperties = {
@@ -48,6 +48,20 @@ const rowStyle: React.CSSProperties = {
     alignItems: 'center',
     gap: '8px',
     flexWrap: 'wrap',
+};
+
+/**
+ * A row that stays on one line.
+ *
+ * Used for the link and sub-link rows, which now carry three buttons next to their
+ * inputs: left to wrap, the buttons would drop onto a second line the moment the
+ * console column got narrow. The inputs give up width instead — they keep their
+ * original flex bases, and `minWidth: 0` on each one is what lets them actually
+ * shrink past their intrinsic width.
+ */
+const singleRowStyle: React.CSSProperties = {
+    ...rowStyle,
+    flexWrap: 'nowrap',
 };
 
 const labelStyle: React.CSSProperties = {
@@ -103,6 +117,58 @@ const ProductNavPanel = () => {
             return {
                 ...category,
                 links: (category.links || []).map((link) => (link.id === linkId ? {...link, ...patch} : link)),
+            };
+        }));
+    }, []);
+
+    const patchSubLinks = useCallback((categoryId: string, linkId: string, subLinks: NavSubLink[]) => {
+        patchLink(categoryId, linkId, {subLinks});
+    }, [patchLink]);
+
+    const moveLink = useCallback((categoryId: string, linkId: string, delta: number) => {
+        setCategories((current) => current.map((category) => {
+            if (category.id !== categoryId) {
+                return category;
+            }
+
+            const links = [...(category.links || [])];
+            const from = links.findIndex((item) => item.id === linkId);
+            const to = from + delta;
+            if (from < 0 || to < 0 || to >= links.length) {
+                return category;
+            }
+
+            const [moved] = links.splice(from, 1);
+            links.splice(to, 0, moved);
+
+            return {...category, links};
+        }));
+    }, []);
+
+    const moveSubLink = useCallback((categoryId: string, linkId: string, subIndex: number, delta: number) => {
+        setCategories((current) => current.map((category) => {
+            if (category.id !== categoryId) {
+                return category;
+            }
+
+            return {
+                ...category,
+                links: (category.links || []).map((link) => {
+                    if (link.id !== linkId) {
+                        return link;
+                    }
+
+                    const subLinks = [...(link.subLinks || [])];
+                    const to = subIndex + delta;
+                    if (to < 0 || to >= subLinks.length) {
+                        return link;
+                    }
+
+                    const [moved] = subLinks.splice(subIndex, 1);
+                    subLinks.splice(to, 0, moved);
+
+                    return {...link, subLinks};
+                }),
             };
         }));
     }, []);
@@ -165,7 +231,7 @@ const ProductNavPanel = () => {
     return (
         <div>
             <p>
-                {'在此维护「产品导航」的分类与网站链接。用户点右上角的按钮，导航就显示在 Mattermost 自己的右侧栏里。每个分类可添加多个链接，链接的 logo 填图片 URL（留空则显示名称首字）。保存后用户端刷新页面即可看到。'}
+                {'在此维护「产品导航」的分类与网站链接。用户点右上角的按钮，导航就显示在 Mattermost 自己的右侧栏里。每个分类可添加多个链接，链接和分类标题都可填 logo 图片 URL（留空则链接显示名称首字、分类只显示文字）；同一产品有多个入口时，用「添加子链接」——用户端点该产品的卡片会弹出全部入口（子链接空行保存时会被丢弃）。保存后用户端刷新页面即可看到。'}
             </p>
 
             <p style={{color: 'rgba(var(--center-channel-color-rgb,63,67,80),0.75)'}}>
@@ -219,36 +285,142 @@ const ProductNavPanel = () => {
                         </button>
                     </div>
 
-                    {(category.links || []).map((link) => (
+                    <div style={{...rowStyle, marginTop: '6px'}}>
+                        <span style={labelStyle}>{'分类 logo'}</span>
+                        <input
+                            style={{...inputStyle, marginBottom: 0, flex: '2 1 260px', maxWidth: '420px'}}
+                            value={category.iconUrl || ''}
+                            placeholder='分类标题小图标的图片 URL（可留空）'
+                            onChange={(event) => patchCategory(category.id, {iconUrl: event.target.value})}
+                        />
+                    </div>
+
+                    {(category.links || []).map((link, linkIndex) => (
                         <div
                             key={link.id}
-                            style={{...rowStyle, marginTop: '8px'}}
+                            style={{marginBottom: '10px'}}
                         >
-                            <input
-                                style={{...inputStyle, marginBottom: 0, flex: '1 1 160px', maxWidth: '200px'}}
-                                value={link.name}
-                                placeholder='名称，如 工单系统'
-                                onChange={(event) => patchLink(category.id, link.id, {name: event.target.value})}
-                            />
-                            <input
-                                style={{...inputStyle, marginBottom: 0, flex: '2 1 260px', maxWidth: '420px'}}
-                                value={link.url}
-                                placeholder='https://example.com'
-                                onChange={(event) => patchLink(category.id, link.id, {url: event.target.value})}
-                            />
-                            <input
-                                style={{...inputStyle, marginBottom: 0, flex: '2 1 220px', maxWidth: '360px'}}
-                                value={link.iconUrl || ''}
-                                placeholder='logo 图片 URL（可留空）'
-                                onChange={(event) => patchLink(category.id, link.id, {iconUrl: event.target.value})}
-                            />
+                            {/*
+                             * Two lines per link, as drawn: the product's identity
+                             * (name + address) on the first, its logo and the row
+                             * controls on the second. Both lines refuse to wrap —
+                             * the inputs give up width instead (minWidth: 0).
+                             */}
+                            <div style={singleRowStyle}>
+                                <input
+                                    style={{...inputStyle, marginBottom: 0, flex: '1 1 180px', maxWidth: '280px', minWidth: 0}}
+                                    value={link.name}
+                                    placeholder='名称，如 工单系统'
+                                    onChange={(event) => patchLink(category.id, link.id, {name: event.target.value})}
+                                />
+                                <input
+                                    style={{...inputStyle, marginBottom: 0, flex: '2 1 300px', minWidth: 0}}
+                                    value={link.url}
+                                    placeholder='https://example.com'
+                                    onChange={(event) => patchLink(category.id, link.id, {url: event.target.value})}
+                                />
+                            </div>
+                            <div style={{...singleRowStyle, marginTop: '6px'}}>
+                                <input
+                                    style={{...inputStyle, marginBottom: 0, flex: '1 1 260px', minWidth: 0}}
+                                    value={link.iconUrl || ''}
+                                    placeholder='logo 图片 URL（可留空）'
+                                    onChange={(event) => patchLink(category.id, link.id, {iconUrl: event.target.value})}
+                                />
+                                <button
+                                    className='btn btn-xs btn-tertiary'
+                                    onClick={() => patchCategory(category.id, {
+                                        links: (category.links || []).filter((item) => item.id !== link.id),
+                                    })}
+                                >
+                                    {'删除'}
+                                </button>
+                                <button
+                                    className='btn btn-xs btn-tertiary'
+                                    title='上移'
+                                    aria-label='上移'
+                                    disabled={linkIndex === 0}
+                                    onClick={() => moveLink(category.id, link.id, -1)}
+                                >
+                                    {'↑'}
+                                </button>
+                                <button
+                                    className='btn btn-xs btn-tertiary'
+                                    title='下移'
+                                    aria-label='下移'
+                                    disabled={linkIndex === (category.links || []).length - 1}
+                                    onClick={() => moveLink(category.id, link.id, 1)}
+                                >
+                                    {'↓'}
+                                </button>
+                            </div>
+
+                            {/*
+                             * The extra entries of one product. Hidden until there is at
+                             * least one: a plain single-address product should not look
+                             * at a second row of inputs it will never fill.
+                             */}
+                            {(link.subLinks || []).length > 0 && (
+                                <div style={{marginLeft: '20px'}}>
+                                    {(link.subLinks || []).map((sub, subIndex) => (
+                                        <div
+                                            key={subIndex}
+                                            style={{...singleRowStyle, marginTop: '6px'}}
+                                        >
+                                            <input
+                                                style={{...inputStyle, marginBottom: 0, flex: '1 1 120px', maxWidth: '180px', minWidth: 0}}
+                                                value={sub.name}
+                                                placeholder='子链接名称'
+                                                onChange={(event) => patchSubLinks(category.id, link.id, (link.subLinks || []).map((item, i) => (
+                                                    i === subIndex ? {...item, name: event.target.value} : item
+                                                )))}
+                                            />
+                                            <input
+                                                style={{...inputStyle, marginBottom: 0, flex: '2 1 200px', minWidth: 0}}
+                                                value={sub.url}
+                                                placeholder='https://example.com/media'
+                                                onChange={(event) => patchSubLinks(category.id, link.id, (link.subLinks || []).map((item, i) => (
+                                                    i === subIndex ? {...item, url: event.target.value} : item
+                                                )))}
+                                            />
+                                            <button
+                                                className='btn btn-xs btn-tertiary'
+                                                onClick={() => patchSubLinks(category.id, link.id, (link.subLinks || []).filter((_, i) => i !== subIndex))}
+                                            >
+                                                {'删除'}
+                                            </button>
+                                            <button
+                                                className='btn btn-xs btn-tertiary'
+                                                title='上移'
+                                                aria-label='上移'
+                                                disabled={subIndex === 0}
+                                                onClick={() => moveSubLink(category.id, link.id, subIndex, -1)}
+                                            >
+                                                {'↑'}
+                                            </button>
+                                            <button
+                                                className='btn btn-xs btn-tertiary'
+                                                title='下移'
+                                                aria-label='下移'
+                                                disabled={subIndex === (link.subLinks || []).length - 1}
+                                                onClick={() => moveSubLink(category.id, link.id, subIndex, 1)}
+                                            >
+                                                {'↓'}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
                             <button
                                 className='btn btn-xs btn-tertiary'
-                                onClick={() => patchCategory(category.id, {
-                                    links: (category.links || []).filter((item) => item.id !== link.id),
-                                })}
+                                style={{marginTop: '6px'}}
+                                onClick={() => patchSubLinks(category.id, link.id, [
+                                    ...(link.subLinks || []),
+                                    {name: '', url: ''},
+                                ])}
                             >
-                                {'删除'}
+                                {'+ 添加子链接'}
                             </button>
                         </div>
                     ))}
